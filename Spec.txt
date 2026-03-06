@@ -1,0 +1,8 @@
+Tools:
+
+Screener / Heatmap – in addition to all historic options would like the ability to conditionally format buckets of momentum (i.e. red stocks if in most negative momentum %ile and green if in most positive)
+Correlation tool - Ability to flex times periods, funds, add/remove stocks
+Base rate tool – ability to curate lists, range of outputs
+Portfolio visualizer – ability to see absolute and relative buckets for specified metrics e.g. valuation (CAPE, div yield, PE etc), sector/country/currency, IRR/Risk score, IRR decomp etc. Ability to create custom buckets and “tagging” by theme/user determined exposure
+Portfolio construction tool – ability add/remove stocks, change position sizes, pro-rate for cash, see impact on specified metrics
+Ability to print tear sheets for key outputs e.g. portfolio visualizer
