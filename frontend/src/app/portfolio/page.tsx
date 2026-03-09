@@ -27,16 +27,11 @@ const COLORS = [
 ];
 
 export default function PortfolioPage() {
-  const [holdings, setHoldings] = useState<PortfolioHolding[]>([
-    { ticker: "MSFT.US", weight: 20 },
-    { ticker: "GOOGL.US", weight: 15 },
-    { ticker: "WMT.US", weight: 12 },
-    { ticker: "9988.HK", weight: 10 },
-    { ticker: "NESN.SW", weight: 8 },
-  ]);
+  const [holdings, setHoldings] = useState<PortfolioHolding[]>([]);
   const [portfolioName, setPortfolioName] = useState("My Portfolio");
   const [savedPortfolios, setSavedPortfolios] = useState<PortfolioListItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<VisualizationResponse | null>(null);
   const [chartView, setChartView] = useState<"sector" | "country">("sector");
@@ -46,14 +41,28 @@ export default function PortfolioPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    loadSavedPortfolios();
+    loadSavedPortfolios().then(async (portfolios) => {
+      // Auto-load the BAIV portfolio if it exists
+      const baiv = portfolios?.find((p) => p.name.includes("BAIV"));
+      if (baiv) {
+        try {
+          const portfolio = await api.getPortfolio(baiv.id);
+          setPortfolioName(portfolio.name);
+          setHoldings(portfolio.holdings);
+        } catch {}
+      }
+      setInitialLoading(false);
+    });
   }, []);
 
-  const loadSavedPortfolios = async () => {
+  const loadSavedPortfolios = async (): Promise<PortfolioListItem[] | undefined> => {
     try {
       const list = await api.listPortfolios();
       setSavedPortfolios(list);
-    } catch {}
+      return list;
+    } catch {
+      return undefined;
+    }
   };
 
   const handleVisualize = async () => {
@@ -167,6 +176,18 @@ export default function PortfolioPage() {
   };
 
   const totalWeight = holdings.reduce((sum, h) => sum + h.weight, 0);
+
+  if (initialLoading) {
+    return (
+      <div>
+        <div className="mb-6">
+          <h1 className="font-serif text-3xl font-bold text-ba-navy">Portfolio Visualizer</h1>
+          <p className="text-gray-500 mt-1">Loading portfolio...</p>
+        </div>
+        <LoadingSpinner message="Loading BAIV portfolio..." />
+      </div>
+    );
+  }
 
   return (
     <div>

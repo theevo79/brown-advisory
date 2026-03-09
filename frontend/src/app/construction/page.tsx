@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import { api } from "@/lib/api";
 import { formatNumber } from "@/lib/formatters";
@@ -13,13 +13,30 @@ interface EditableRow {
 }
 
 export default function ConstructionPage() {
-  const [rows, setRows] = useState<EditableRow[]>([
-    { ticker: "MSFT.US", current_weight: 20, new_weight: 20 },
-    { ticker: "GOOGL.US", current_weight: 15, new_weight: 15 },
-    { ticker: "WMT.US", current_weight: 12, new_weight: 12 },
-    { ticker: "9988.HK", current_weight: 10, new_weight: 10 },
-  ]);
+  const [rows, setRows] = useState<EditableRow[]>([]);
+  const [initialLoading, setInitialLoading] = useState(true);
   const [newTicker, setNewTicker] = useState("");
+
+  useEffect(() => {
+    // Auto-load BAIV portfolio as the starting point
+    (async () => {
+      try {
+        const portfolios = await api.listPortfolios();
+        const baiv = portfolios.find((p) => p.name.includes("BAIV"));
+        if (baiv) {
+          const portfolio = await api.getPortfolio(baiv.id);
+          setRows(
+            portfolio.holdings.map((h) => ({
+              ticker: h.ticker,
+              current_weight: h.weight,
+              new_weight: h.weight,
+            }))
+          );
+        }
+      } catch {}
+      setInitialLoading(false);
+    })();
+  }, []);
   const [newWeight, setNewWeight] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -126,6 +143,18 @@ export default function ConstructionPage() {
       </tbody>
     </table>
   );
+
+  if (initialLoading) {
+    return (
+      <div>
+        <div className="mb-6">
+          <h1 className="font-serif text-3xl font-bold text-ba-navy">Portfolio Construction</h1>
+          <p className="text-gray-500 mt-1">Loading portfolio...</p>
+        </div>
+        <LoadingSpinner message="Loading BAIV portfolio..." />
+      </div>
+    );
+  }
 
   return (
     <div>
