@@ -14,6 +14,7 @@ REGIONS = [
     {"id": "dm_us", "name": "US", "description": "United States", "exchanges": ["US"], "countries": ["United States"]},
     {"id": "dm_europe", "name": "Europe (DM)", "description": "Developed Market Europe", "exchanges": ["LSE", "PA", "XETRA", "MC", "MI", "AS", "SW", "OL", "ST", "CO", "HE", "VX", "LIS", "AT", "IR"], "countries": ["United Kingdom", "France", "Germany", "Spain", "Italy", "Netherlands", "Switzerland", "Norway", "Sweden", "Denmark", "Finland", "Austria", "Belgium", "Portugal", "Ireland", "Greece"]},
     {"id": "dm_apac", "name": "Asia Pacific (DM)", "description": "Developed Market Asia Pacific", "exchanges": ["TSE", "AU", "HK", "SG"], "countries": ["Japan", "Australia", "Hong Kong", "Singapore"]},
+    {"id": "global_ex_us", "name": "Global ex-US", "description": "All markets excluding the US", "exchanges": ["LSE", "PA", "XETRA", "MC", "MI", "AS", "SW", "OL", "ST", "CO", "HE", "VX", "LIS", "AT", "IR", "TSE", "AU", "HK", "SG", "SHG", "SHE", "TWSE", "KQ", "KO", "NSE", "BSE", "JK", "BK", "KLSE", "PSE", "HM", "SA", "MX", "BA", "SN", "CL", "LIM", "JSE", "IS", "WSE", "BUD", "SR", "QA"], "countries": []},
     {"id": "global", "name": "Global", "description": "All markets", "exchanges": [], "countries": []},
 ]
 

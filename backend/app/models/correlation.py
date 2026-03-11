@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 
 
 class CorrelationRequest(BaseModel):
-    tickers: List[str] = Field(..., min_length=2, max_length=50)
+    tickers: List[str] = Field(..., min_length=2, max_length=100)
     years: int = Field(default=5, ge=1, le=10)
     start_date: Optional[str] = None
     end_date: Optional[str] = None

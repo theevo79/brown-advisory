@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import type { CompanyResult, SortConfig } from "@/lib/types";
-import { formatNumber, formatCurrency, formatPercentile, getPercentileBadgeClass } from "@/lib/formatters";
+import { formatNumber, formatCurrency, formatPercentile } from "@/lib/formatters";
 
 interface ResultsTableProps {
   results: CompanyResult[];
@@ -74,8 +74,8 @@ export default function ResultsTable({ results, metrics, momentumData = {} }: Re
   const totalPages = Math.ceil(sorted.length / pageSize);
 
   const SortIcon = ({ col }: { col: string }) => {
-    if (sort.key !== col) return <span className="text-gray-300 ml-1">&#8597;</span>;
-    return <span className="ml-1">{sort.direction === "asc" ? "&#8593;" : "&#8595;"}</span>;
+    if (sort.key !== col) return <span className="text-gray-300 ml-1">{"\u2195"}</span>;
+    return <span className="ml-1">{sort.direction === "asc" ? "\u2191" : "\u2193"}</span>;
   };
 
   return (
@@ -182,7 +182,7 @@ export default function ResultsTable({ results, metrics, momentumData = {} }: Re
                           <div className="flex items-center justify-end gap-1">
                             <span>{formatNumber(mv.value, 1)}</span>
                             {mv.percentile != null && (
-                              <span className={`text-xs px-1.5 py-0.5 rounded ${getPercentileBadgeClass(mv.percentile)}`}>
+                              <span className="text-xs px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">
                                 {formatPercentile(mv.percentile)}
                               </span>
                             )}
@@ -195,7 +195,7 @@ export default function ResultsTable({ results, metrics, momentumData = {} }: Re
                   })}
                   <td className="py-2 px-2 text-right">
                     {r.composite_percentile != null ? (
-                      <span className={`text-xs font-medium px-2 py-1 rounded ${getPercentileBadgeClass(r.composite_percentile)}`}>
+                      <span className="text-xs font-medium px-2 py-1 rounded bg-gray-100 text-gray-500">
                         {formatPercentile(r.composite_percentile)}
                       </span>
                     ) : "—"}

@@ -16,13 +16,22 @@ class MetricsCalculator:
         net_income_usd = convert_to_usd(net_income, company_country, is_financial_statement=True)
         if not net_income_usd or net_income_usd <= 0:
             return None
-        return round(market_cap / net_income_usd, 2)
+        pe = market_cap / net_income_usd
+        if pe > 500:
+            return None
+        return round(pe, 2)
 
     @staticmethod
-    def calculate_pb_ratio(market_cap, total_equity):
+    def calculate_pb_ratio(market_cap, total_equity, company_country=None):
         if not market_cap or not total_equity or total_equity <= 0:
             return None
-        return round(market_cap / total_equity, 2)
+        equity_usd = convert_to_usd(total_equity, company_country, is_financial_statement=True)
+        if not equity_usd or equity_usd <= 0:
+            return None
+        pb = market_cap / equity_usd
+        if pb > 200:
+            return None
+        return round(pb, 2)
 
     @staticmethod
     def calculate_ps_ratio(market_cap, revenue, company_country=None):
@@ -232,7 +241,7 @@ class MetricsCalculator:
 
         metrics = {
             'pe_ratio': cls.calculate_pe_ratio(market_cap, net_income, company_country),
-            'pb_ratio': cls.calculate_pb_ratio(market_cap, total_equity),
+            'pb_ratio': cls.calculate_pb_ratio(market_cap, total_equity, company_country),
             'ps_ratio': cls.calculate_ps_ratio(market_cap, total_revenue, company_country),
             'ev_ebitda': cls.calculate_ev_ebitda(market_cap, net_debt, ebitda, company_country),
             'ev_sales': cls.calculate_ev_sales(market_cap, net_debt, total_revenue, company_country),

@@ -24,6 +24,9 @@ export default function ScreeningPage() {
     advMin?: number;
     throughCycleYears: number;
     minYears: number;
+    valuationMetric?: string;
+    valuationPercentileMin?: number;
+    valuationPercentileMax?: number;
   }) => {
     setLoading(true);
     setError(null);
@@ -40,6 +43,9 @@ export default function ScreeningPage() {
         through_cycle_years: params.throughCycleYears,
         min_years: params.minYears,
         limit: 2000,
+        valuation_metric: params.valuationMetric,
+        valuation_percentile_min: params.valuationPercentileMin,
+        valuation_percentile_max: params.valuationPercentileMax,
       });
       setResults(response.results);
       setStats({ total: response.total_companies, filtered: response.filtered_count });

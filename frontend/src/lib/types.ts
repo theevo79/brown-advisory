@@ -34,6 +34,9 @@ export interface ScreeningRequest {
   market_cap_max?: number;
   adv_usd_min?: number;
   adv_usd_max?: number;
+  valuation_metric?: string;
+  valuation_percentile_min?: number;
+  valuation_percentile_max?: number;
 }
 
 export interface ScreeningResponse {
@@ -116,6 +119,8 @@ export interface PeerDistribution {
   company_percentile: number;
   histogram_bins: number[];
   histogram_counts: number[];
+  total_data_points: number;
+  raw_values: number[];
 }
 
 export interface HistoricalDataPoint {
@@ -176,6 +181,10 @@ export interface BucketBreakdown {
   weight: number;
   count: number;
   tickers: string[];
+  avg_pe?: number;
+  avg_roe?: number;
+  avg_net_margin?: number;
+  avg_pb?: number;
 }
 
 export interface MetricSummary {
@@ -190,6 +199,8 @@ export interface MetricSummary {
   div_yield?: number;
   roe?: number;
   net_margin?: number;
+  eps?: number;
+  cape_ratio?: number;
 }
 
 export interface VisualizationResponse {
@@ -202,8 +213,34 @@ export interface VisualizationResponse {
   weighted_pb?: number;
   weighted_div_yield?: number;
   weighted_roe?: number;
+  weighted_net_margin?: number;
+  weighted_cape?: number;
   top_10_weight: number;
   hhi: number;
+}
+
+// Tags
+export interface Tag {
+  id: number;
+  name: string;
+  colour: string;
+  tag_type: string;
+  tickers: string[];
+}
+
+export interface TagBreakdown {
+  name: string;
+  weight: number;
+  count: number;
+  tickers: string[];
+  colour: string;
+  tag_type: string;
+  weighted_pe: number | null;
+  weighted_pb: number | null;
+  weighted_roe: number | null;
+  weighted_net_margin: number | null;
+  weighted_cape: number | null;
+  weighted_div_yield: number | null;
 }
 
 // Construction
@@ -221,6 +258,12 @@ export interface HoldingImpact {
   current_weight: number;
   new_weight: number;
   delta: number;
+  market_cap_usd?: number;
+  pe_ratio?: number;
+  pb_ratio?: number;
+  roe?: number;
+  net_margin?: number;
+  cape_ratio?: number;
 }
 
 export interface BucketDelta {
@@ -234,6 +277,7 @@ export interface ConstructionResponse {
   holdings: HoldingImpact[];
   sector_deltas: BucketDelta[];
   country_deltas: BucketDelta[];
+  market_cap_deltas: BucketDelta[];
   current_total: number;
   new_total: number;
   num_additions: number;
@@ -243,6 +287,16 @@ export interface ConstructionResponse {
   new_top10: number;
   current_hhi: number;
   new_hhi: number;
+  current_weighted_pe?: number;
+  current_weighted_cape?: number;
+  current_weighted_pb?: number;
+  current_weighted_roe?: number;
+  current_weighted_net_margin?: number;
+  weighted_pe?: number;
+  weighted_cape?: number;
+  weighted_pb?: number;
+  weighted_roe?: number;
+  weighted_net_margin?: number;
 }
 
 // Momentum

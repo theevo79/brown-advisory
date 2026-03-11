@@ -15,6 +15,22 @@ CURRENCY_RATES = {
     'AUD': 1.52, 'CAD': 1.36, 'NOK': 10.5, 'SEK': 10.3, 'DKK': 6.9,
 }
 
+# Penny/cent currencies → base currency mapping
+# GBX = British pence (1 GBP = 100 GBX), ZAc = SA cents (1 ZAR = 100 ZAc)
+# ILA = Israeli Agorot (1 ILS = 100 ILA)
+PENNY_CURRENCY_MAP = {
+    'GBX': 'GBP',
+    'GBp': 'GBP',
+    'ZAc': 'ZAR',
+    'ZAC': 'ZAR',
+    'ILA': 'ILS',
+}
+
+
+def normalize_currency(currency: str) -> str:
+    """Map penny/cent currencies to base currency."""
+    return PENNY_CURRENCY_MAP.get(currency, currency)
+
 COUNTRY_CURRENCY = {
     'China': 'CNY', 'Taiwan': 'TWD', 'South Korea': 'KRW', 'India': 'INR',
     'Indonesia': 'IDR', 'Thailand': 'THB', 'Malaysia': 'MYR', 'Philippines': 'PHP',
@@ -63,6 +79,12 @@ def convert_to_usd(
         currency = get_currency_for_country(country)
     if not currency or currency == 'USD':
         return amount
+    # Normalize penny/cent currencies (GBX→GBP, ZAc→ZAR)
+    base = normalize_currency(currency)
+    if base != currency:
+        # Price-related data (market cap) in penny currencies is already in base units
+        # from EODHD, so we just convert base→USD without dividing by 100
+        currency = base
     rate = CURRENCY_RATES.get(currency)
     if not rate:
         return amount

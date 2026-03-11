@@ -1,8 +1,10 @@
 "use client";
 
 import { useState, useRef } from "react";
+import * as XLSX from "xlsx";
 import CorrelationMatrix from "@/components/CorrelationMatrix";
 import LoadingSpinner from "@/components/LoadingSpinner";
+import TickerSearch from "@/components/TickerSearch";
 import { api } from "@/lib/api";
 import { formatNumber, formatPercent } from "@/lib/formatters";
 import type { CorrelationResponse } from "@/lib/types";
@@ -15,7 +17,7 @@ const TIME_PERIODS = [
 ];
 
 export default function CorrelationPage() {
-  const [tickerInput, setTickerInput] = useState("AAPL.US, MSFT.US, GOOGL.US, AMZN.US, META.US");
+  const [tickerInput, setTickerInput] = useState("2670.TSE, ABN.AS, ADEN.SW, AGS.BR, AIBG.LSE, ABF.LSE, AMV0.XETRA, SAN.MC, BIRG.IR, BARC.LSE, BAS.XETRA, BNP.PA, BNR.XETRA, BTI.US, BLND.LSE, BT-A.LSE, BRBY.LSE, CON.XETRA, 1878.TSE, DSY.PA, DCC.LSE, 4324.TSE, EDEN.PA, EVK.XETRA, FDJU.PA, FME.XETRA, GFC.PA, HEN3.XETRA, ICLR.US, IMB.LSE, 7182.TSE, AD.AS, LAND.LSE, MICC.AS, 8725.TSE, NICE.US, PBR-A.US, PRU.LSE, RBI.VI, RAND.AS, RNO.PA, REP.MC, RICHT.BUD, SNY.US, SW.PA, 8630.TSE, 8309.TSE, UHR.SW, TX.US, VOD.LSE, WPP.LSE, 7272.TSE");
   const [years, setYears] = useState(3);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -36,42 +38,101 @@ export default function CorrelationPage() {
 
     setUploadedFileName(file.name);
 
+    const fileName = file.name.toLowerCase();
+    const isExcel = fileName.endsWith(".xlsx") || fileName.endsWith(".xls");
+
     const reader = new FileReader();
     reader.onload = (ev) => {
-      const text = ev.target?.result as string;
-      if (text) {
-        const lines = text.split(/[\n\r]+/).filter(Boolean);
-        const tickers: string[] = [];
-        for (const line of lines) {
-          const parts = line.split(/[,\t;]+/);
-          for (const part of parts) {
-            const cleaned = part.trim().replace(/['"]/g, "");
-            // Accept tickers with dot (SYMBOL.EXCHANGE) or plain symbols — add .US default
-            if (cleaned.length > 0 && cleaned.length < 20 && !/^[0-9.]+$/.test(cleaned)) {
-              if (cleaned.includes(".")) {
-                tickers.push(cleaned.toUpperCase());
-              } else if (/^[A-Za-z]/.test(cleaned)) {
-                // If no exchange suffix, skip header-like words
-                const upper = cleaned.toUpperCase();
-                if (!["TICKER", "SYMBOL", "NAME", "COMPANY", "DATE", "WEIGHT"].includes(upper)) {
-                  tickers.push(upper + ".US");
+      try {
+        let tickers: string[] = [];
+
+        if (isExcel) {
+          const data = ev.target?.result;
+          const workbook = XLSX.read(data, { type: "binary" });
+          const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+          const jsonData = XLSX.utils.sheet_to_json(firstSheet, { header: 1 }) as any[][];
+
+          if (jsonData.length === 0) {
+            setError("Excel file is empty");
+            return;
+          }
+
+          const headers = jsonData[0].map((h: any) => String(h).toLowerCase().trim());
+          const tickerColIndex = headers.findIndex(
+            (h: string) => h === "ticker" || h === "tickers" || h === "symbol"
+          );
+
+          if (tickerColIndex !== -1) {
+            for (let i = 1; i < jsonData.length; i++) {
+              const row = jsonData[i];
+              if (row[tickerColIndex]) {
+                const ticker = String(row[tickerColIndex]).trim().toUpperCase();
+                if (ticker.length > 0 && ticker.includes(".")) {
+                  tickers.push(ticker);
+                }
+              }
+            }
+          } else {
+            for (let i = 0; i < jsonData.length; i++) {
+              const row = jsonData[i];
+              if (row[0]) {
+                const ticker = String(row[0]).trim().toUpperCase();
+                if (ticker.length > 0 && ticker.includes(".")) {
+                  tickers.push(ticker);
                 }
               }
             }
           }
+        } else {
+          const text = ev.target?.result as string;
+          if (!text) return;
+
+          const lines = text.split(/[\r\n]+/).filter((line) => line.trim().length > 0);
+          if (lines.length === 0) return;
+
+          const firstLine = lines[0].toLowerCase();
+          const delimiter = firstLine.includes("\t") ? "\t" : ",";
+          const headers = lines[0].split(delimiter).map((h) => h.trim().toLowerCase());
+
+          const tickerColIndex = headers.findIndex(
+            (h) => h === "ticker" || h === "tickers" || h === "symbol"
+          );
+
+          if (tickerColIndex !== -1) {
+            for (let i = 1; i < lines.length; i++) {
+              const columns = lines[i].split(delimiter);
+              if (columns[tickerColIndex]) {
+                const ticker = columns[tickerColIndex].trim().replace(/^["']|["']$/g, "").toUpperCase();
+                if (ticker.length > 0 && ticker.includes(".")) {
+                  tickers.push(ticker);
+                }
+              }
+            }
+          } else {
+            tickers = text
+              .split(/[\n,\t]/)
+              .map((t) => t.trim().replace(/^["']|["']$/g, "").toUpperCase())
+              .filter((t) => t.length > 0 && t.includes("."));
+          }
         }
+
         if (tickers.length > 0) {
-          // Deduplicate
-          const unique = [...new Set(tickers)];
+          const unique = Array.from(new Set(tickers));
           setTickerInput(unique.join(", "));
         } else {
           setError("No tickers found in file. Expected SYMBOL.EXCHANGE format (e.g., AAPL.US)");
         }
+      } catch {
+        setError("Error parsing file");
       }
     };
-    reader.readAsText(file);
 
-    // Reset file input so same file can be re-uploaded
+    if (isExcel) {
+      reader.readAsBinaryString(file);
+    } else {
+      reader.readAsText(file, "UTF-8");
+    }
+
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
@@ -134,11 +195,18 @@ export default function CorrelationPage() {
               placeholder="AAPL.US, MSFT.US, GOOGL.US..."
               className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:border-ba-accent focus:ring-1 focus:ring-ba-accent outline-none font-mono"
             />
+            <div className="flex items-center gap-2 mt-2">
+              <TickerSearch
+                onSelect={handleAddTicker}
+                placeholder="Search & add ticker..."
+                className="flex-1"
+              />
+            </div>
             <div className="flex items-center gap-3 mt-2">
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".csv,.txt,.tsv,.xlsx"
+                accept=".csv,.txt,.tsv,.xlsx,.xls"
                 onChange={handleFileUpload}
                 className="hidden"
                 id="correlation-file-upload"
@@ -147,7 +215,7 @@ export default function CorrelationPage() {
                 htmlFor="correlation-file-upload"
                 className="ba-btn text-xs py-1 cursor-pointer inline-block"
               >
-                Upload CSV/TXT
+                Upload File
               </label>
               {uploadedFileName && (
                 <span className="text-xs text-ba-accent">{uploadedFileName}</span>

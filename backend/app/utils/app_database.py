@@ -54,7 +54,8 @@ class AppDatabase:
             CREATE TABLE IF NOT EXISTS tags (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL UNIQUE,
-                colour TEXT DEFAULT '#163963'
+                colour TEXT DEFAULT '#163963',
+                tag_type TEXT DEFAULT 'General'
             );
 
             CREATE TABLE IF NOT EXISTS ticker_tags (
@@ -65,6 +66,15 @@ class AppDatabase:
             );
         """)
         conn.commit()
+
+        # Migration: add tag_type column if missing
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(tags)")
+        cols = [row[1] for row in cursor.fetchall()]
+        if 'tag_type' not in cols:
+            conn.execute("ALTER TABLE tags ADD COLUMN tag_type TEXT DEFAULT 'General'")
+            conn.commit()
+
         conn.close()
 
     def execute(self, sql, params=None):

@@ -13,6 +13,8 @@ import type {
   VisualizationResponse,
   ConstructionHolding,
   ConstructionResponse,
+  Tag,
+  TagBreakdown,
 } from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8002/api";
@@ -48,6 +50,23 @@ export const api = {
 
   async getMarketHeatmap(request: any): Promise<any> {
     const response = await apiClient.post("/heatmap/market", request);
+    return response.data;
+  },
+
+  async getPortfolioHeatmap(
+    holdings: Array<{ ticker: string; weight: number }>,
+    metric: string = "cape",
+    throughCycleYears: number = 10,
+    minYears: number = 5,
+    momentumPeriod?: string
+  ): Promise<any> {
+    const response = await apiClient.post("/heatmap/portfolio", {
+      holdings,
+      metric,
+      through_cycle_years: throughCycleYears,
+      min_years: minYears,
+      ...(momentumPeriod ? { momentum_period: momentumPeriod } : {}),
+    });
     return response.data;
   },
 
@@ -103,9 +122,14 @@ export const api = {
   // Export
   async downloadTearsheet(
     holdings: Array<{ ticker: string; weight: number }>,
-    sections: string[] = ["summary", "sectors", "countries", "holdings"]
+    sections: string[] = ["summary", "sectors", "countries", "holdings"],
+    portfolioName: string = "Portfolio"
   ): Promise<Blob> {
-    const response = await apiClient.post("/export/tearsheet", { holdings, sections }, {
+    const response = await apiClient.post("/export/tearsheet", {
+      holdings,
+      sections,
+      portfolio_name: portfolioName,
+    }, {
       responseType: "blob",
     });
     return response.data;
@@ -114,6 +138,34 @@ export const api = {
   async searchCompanies(query: string, limit: number = 50): Promise<any> {
     const params = new URLSearchParams({ q: query, limit: limit.toString() });
     const response = await apiClient.get(`/metadata/search/companies?${params.toString()}`);
+    return response.data;
+  },
+
+  // Tags
+  async listTags(): Promise<Tag[]> {
+    const response = await apiClient.get<Tag[]>("/portfolio/tags");
+    return response.data;
+  },
+
+  async createTag(name: string, colour: string, tagType: string = "General"): Promise<Tag> {
+    const response = await apiClient.post<Tag>("/portfolio/tags", { name, colour, tag_type: tagType });
+    return response.data;
+  },
+
+  async deleteTag(id: number): Promise<void> {
+    await apiClient.delete(`/portfolio/tags/${id}`);
+  },
+
+  async assignTickersToTag(tagId: number, tickers: string[]): Promise<void> {
+    await apiClient.post(`/portfolio/tags/${tagId}/assign`, { tickers });
+  },
+
+  async unassignTickerFromTag(tagId: number, ticker: string): Promise<void> {
+    await apiClient.delete(`/portfolio/tags/${tagId}/assign/${ticker}`);
+  },
+
+  async getTagBreakdown(holdings: PortfolioHolding[]): Promise<TagBreakdown[]> {
+    const response = await apiClient.post<TagBreakdown[]>("/portfolio/tags/breakdown", { holdings });
     return response.data;
   },
 

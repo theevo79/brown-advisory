@@ -12,6 +12,10 @@ REGION_EXCHANGE_MAP = {
     "dm_europe": ["LSE", "PA", "XETRA", "MC", "MI", "AS", "SW", "OL", "ST", "CO", "HE", "VX",
                   "LIS", "AT", "IR", "MIL", "BR", "VI", "LS"],
     "dm_apac": ["TSE", "AU", "HK", "SG", "SI"],
+    "global_ex_us": ["LSE", "PA", "XETRA", "MC", "MI", "AS", "SW", "OL", "ST", "CO", "HE", "VX",
+                     "LIS", "AT", "IR", "TSE", "AU", "HK", "SG", "SHG", "SHE", "TWSE", "KQ", "KO",
+                     "NSE", "BSE", "JK", "BK", "KLSE", "PSE", "HM", "SA", "MX", "BA", "SN", "CL",
+                     "LIM", "JSE", "IS", "WSE", "BUD", "SR", "QA"],
     "global": [],
     # Legacy mappings for compatibility
     "emerging_markets": ["SHG", "SHE", "NS", "HK", "TW", "TWO", "SA", "MX", "SR", "JSE", "JK",

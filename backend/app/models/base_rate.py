@@ -26,6 +26,7 @@ class PeerDistribution(BaseModel):
     winsorized_min: float
     winsorized_max: float
     total_data_points: int
+    raw_values: List[float] = Field(default_factory=list, description="Raw peer values for frontend re-binning")
 
 
 class HistoricalDataPoint(BaseModel):

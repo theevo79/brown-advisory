@@ -28,7 +28,7 @@ class ExportService:
     def __init__(self):
         self.portfolio_service = PortfolioService()
 
-    def generate_tearsheet(self, holdings: List[Dict], sections: List[str]) -> bytes:
+    def generate_tearsheet(self, holdings: List[Dict], sections: List[str], portfolio_name: str = "Portfolio") -> bytes:
         """Generate a PDF tear sheet for a portfolio."""
         buffer = BytesIO()
 
@@ -89,7 +89,7 @@ class ExportService:
 
         # Header
         story.append(Paragraph("Brown Advisory", title_style))
-        story.append(Paragraph("Portfolio Tear Sheet", subtitle_style))
+        story.append(Paragraph(f"{portfolio_name} — Tear Sheet", subtitle_style))
         story.append(HRFlowable(width="100%", thickness=2, color=BA_NAVY))
         story.append(Spacer(1, 8))
         story.append(Paragraph(
@@ -113,6 +113,8 @@ class ExportService:
                 summary_data.append(['Weighted P/E', f'{viz.weighted_pe:.1f}x'])
             if viz.weighted_pb:
                 summary_data.append(['Weighted P/B', f'{viz.weighted_pb:.1f}x'])
+            if viz.weighted_cape:
+                summary_data.append(['Weighted CAPE', f'{viz.weighted_cape:.1f}x'])
             if viz.weighted_roe:
                 summary_data.append(['Weighted ROE', f'{viz.weighted_roe:.1f}%'])
 
@@ -176,22 +178,46 @@ class ExportService:
             story.append(country_table)
             story.append(Spacer(1, 16))
 
+        # Market Cap Breakdown
+        if 'market_cap' in sections and viz.market_cap_breakdown:
+            story.append(Paragraph("Market Cap Breakdown", heading_style))
+
+            mcap_data = [['Bucket', 'Weight', 'Stocks']]
+            for b in viz.market_cap_breakdown:
+                mcap_data.append([b.name, f'{b.weight:.1f}%', str(b.count)])
+
+            mcap_table = Table(mcap_data, colWidths=[250, 100, 80])
+            mcap_table.setStyle(TableStyle([
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 9),
+                ('TEXTCOLOR', (0, 0), (-1, 0), white),
+                ('BACKGROUND', (0, 0), (-1, 0), BA_NAVY),
+                ('ALIGN', (1, 0), (-1, -1), 'RIGHT'),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+                ('TOPPADDING', (0, 0), (-1, -1), 5),
+                ('LINEBELOW', (0, 0), (-1, -1), 0.5, HexColor('#E5E7EB')),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [white, BA_LIGHT]),
+            ]))
+            story.append(mcap_table)
+            story.append(Spacer(1, 16))
+
         # Holdings Detail
         if 'holdings' in sections:
             story.append(Paragraph("Holdings", heading_style))
 
-            holdings_data = [['Ticker', 'Company', 'Weight', 'Sector', 'ROE', 'Margin']]
+            holdings_data = [['Ticker', 'Company', 'Weight', 'Sector', 'P/E', 'P/B', 'CAPE']]
             for h in viz.holdings:
                 holdings_data.append([
                     h.ticker,
                     h.company_name[:25] + ('...' if len(h.company_name) > 25 else ''),
                     f'{h.weight:.1f}%',
                     (h.sector or '-')[:15],
-                    f'{h.roe:.1f}%' if h.roe else '-',
-                    f'{h.net_margin:.1f}%' if h.net_margin else '-',
+                    f'{h.pe_ratio:.1f}x' if h.pe_ratio else '-',
+                    f'{h.pb_ratio:.1f}x' if h.pb_ratio else '-',
+                    f'{h.cape_ratio:.0f}x' if h.cape_ratio else '-',
                 ])
 
-            holdings_table = Table(holdings_data, colWidths=[65, 140, 50, 85, 45, 45])
+            holdings_table = Table(holdings_data, colWidths=[60, 130, 45, 85, 45, 45, 45])
             holdings_table.setStyle(TableStyle([
                 ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
                 ('FONTSIZE', (0, 0), (-1, -1), 8),

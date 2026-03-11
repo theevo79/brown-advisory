@@ -10,6 +10,7 @@ from app.models.portfolio import (
     PortfolioListItem, VisualizeRequest, VisualizationResponse,
     BucketBreakdown, MetricSummary
 )
+from app.services.construction_service import MARKET_CAP_BUCKETS, _get_market_cap_bucket
 
 
 class PortfolioService:
@@ -111,7 +112,10 @@ class PortfolioService:
             country = company.get('country', 'Unknown')
 
             # Get latest fundamentals
-            pe, pb, div_yield, roe, net_margin, market_cap = self._get_company_metrics(company_id)
+            pe, pb, div_yield, roe, net_margin, market_cap, eps = self._get_company_metrics(company_id)
+
+            # Compute CAPE (10-year avg earnings)
+            cape = self._compute_cape(company_id, market_cap)
 
             holdings_data.append(MetricSummary(
                 ticker=h.ticker,
@@ -124,7 +128,9 @@ class PortfolioService:
                 pb_ratio=pb,
                 div_yield=div_yield,
                 roe=roe,
-                net_margin=net_margin
+                net_margin=net_margin,
+                eps=eps,
+                cape_ratio=cape
             ))
 
             # Bucket assignments
@@ -133,15 +139,30 @@ class PortfolioService:
             sector_map.setdefault(s, []).append((h.ticker, h.weight))
             country_map.setdefault(c, []).append((h.ticker, h.weight))
 
+        # Build a lookup from ticker -> metrics for bucket averages
+        metrics_by_ticker = {h.ticker: h for h in holdings_data}
+
+        # Build market cap map
+        mcap_map: Dict[str, List[Tuple[str, float]]] = {}
+        for h_data in holdings_data:
+            bucket = _get_market_cap_bucket(h_data.market_cap_usd)
+            mcap_map.setdefault(bucket, []).append((h_data.ticker, h_data.weight))
+
         # Build breakdowns
-        sector_breakdown = self._build_breakdown(sector_map)
-        country_breakdown = self._build_breakdown(country_map)
+        sector_breakdown = self._build_breakdown(sector_map, metrics_by_ticker)
+        country_breakdown = self._build_breakdown(country_map, metrics_by_ticker)
+        mcap_breakdown_raw = self._build_breakdown(mcap_map, metrics_by_ticker)
+        # Order by bucket size (Mega→Micro)
+        mcap_order = [label for label, _, _ in MARKET_CAP_BUCKETS] + ["Unknown"]
+        mcap_breakdown = sorted(mcap_breakdown_raw, key=lambda x: mcap_order.index(x.name) if x.name in mcap_order else 999)
 
         # Weighted metrics
         weighted_pe = self._weighted_metric(holdings_data, 'pe_ratio', total_weight)
         weighted_pb = self._weighted_metric(holdings_data, 'pb_ratio', total_weight)
         weighted_div = self._weighted_metric(holdings_data, 'div_yield', total_weight)
         weighted_roe = self._weighted_metric(holdings_data, 'roe', total_weight)
+        weighted_margin = self._weighted_metric(holdings_data, 'net_margin', total_weight)
+        weighted_cape = self._weighted_metric(holdings_data, 'cape_ratio', total_weight)
 
         # Concentration
         weights = sorted([h.weight for h in request.holdings], reverse=True)
@@ -152,12 +173,15 @@ class PortfolioService:
             holdings=holdings_data,
             sector_breakdown=sector_breakdown,
             country_breakdown=country_breakdown,
+            market_cap_breakdown=mcap_breakdown,
             total_weight=total_weight,
             num_holdings=len(request.holdings),
             weighted_pe=weighted_pe,
             weighted_pb=weighted_pb,
             weighted_div_yield=weighted_div,
             weighted_roe=weighted_roe,
+            weighted_net_margin=weighted_margin,
+            weighted_cape=weighted_cape,
             top_10_weight=top_10_weight,
             hhi=round(hhi, 1)
         )
@@ -166,9 +190,43 @@ class PortfolioService:
         conn = self.db.db.get_connection()
         cursor = conn.cursor()
 
-        pe = pb = div_yield = roe = net_margin = market_cap = None
+        pe = pb = div_yield = roe = net_margin = market_cap = eps = None
 
-        # Latest income statement
+        # --- Tier 1: Try market_data table (pre-calculated) ---
+        cursor.execute('''
+            SELECT market_cap_usd, market_cap, pe_ratio, pb_ratio, eps
+            FROM market_data
+            WHERE company_id = ? AND market_cap IS NOT NULL
+            ORDER BY date DESC LIMIT 1
+        ''', (company_id,))
+        md_row = cursor.fetchone()
+
+        if md_row:
+            market_cap = md_row[0] or md_row[1]  # prefer USD, fall back to native
+            pe = md_row[2]
+            pb = md_row[3]
+            eps = md_row[4]
+
+        # --- Tier 2: If no market_data, try price * shares ---
+        if not market_cap:
+            cursor.execute('''
+                SELECT adjusted_close FROM daily_prices
+                WHERE company_id = ? ORDER BY trade_date DESC LIMIT 1
+            ''', (company_id,))
+            price_row = cursor.fetchone()
+
+            cursor.execute('''
+                SELECT weighted_average_shares_outstanding_dil
+                FROM income_statements
+                WHERE company_id = ? AND weighted_average_shares_outstanding_dil IS NOT NULL
+                ORDER BY fiscal_year DESC LIMIT 1
+            ''', (company_id,))
+            shares_row = cursor.fetchone()
+
+            if price_row and shares_row and price_row[0] and shares_row[0]:
+                market_cap = price_row[0] * shares_row[0]
+
+        # --- Tier 3: Fundamentals for ROE, net margin, and fallback PE/PB ---
         cursor.execute('''
             SELECT net_income, total_revenue
             FROM income_statements
@@ -177,7 +235,6 @@ class PortfolioService:
         ''', (company_id,))
         inc = cursor.fetchone()
 
-        # Latest balance sheet
         cursor.execute('''
             SELECT total_stockholder_equity, total_assets
             FROM balance_sheets
@@ -194,43 +251,76 @@ class PortfolioService:
             if rev and rev != 0 and ni:
                 net_margin = (ni / rev) * 100
 
-        # Latest daily price for market cap
+            # Fallback PE/PB from fundamentals if not from market_data
+            if pe is None and market_cap and ni and ni != 0:
+                calc_pe = market_cap / ni
+                pe = calc_pe if calc_pe > 0 else None
+            if pb is None and market_cap and eq and eq != 0:
+                pb = market_cap / eq
+
+        return pe, pb, div_yield, roe, net_margin, market_cap, eps
+
+    def _compute_cape(self, company_id: int, market_cap: Optional[float], years: int = 10) -> Optional[float]:
+        """Compute CAPE ratio: market_cap / avg(net_income over last N years)."""
+        if not market_cap or market_cap <= 0:
+            return None
+
+        conn = self.db.db.get_connection()
+        cursor = conn.cursor()
         cursor.execute('''
-            SELECT adjusted_close FROM daily_prices
-            WHERE company_id = ? ORDER BY trade_date DESC LIMIT 1
-        ''', (company_id,))
-        price_row = cursor.fetchone()
+            SELECT net_income FROM income_statements
+            WHERE company_id = ? AND net_income IS NOT NULL
+            ORDER BY fiscal_year DESC LIMIT ?
+        ''', (company_id, years))
+        rows = cursor.fetchall()
 
-        cursor.execute('''
-            SELECT weighted_average_shares_outstanding_dil
-            FROM income_statements
-            WHERE company_id = ? AND weighted_average_shares_outstanding_dil IS NOT NULL
-            ORDER BY fiscal_year DESC LIMIT 1
-        ''', (company_id,))
-        shares_row = cursor.fetchone()
+        if len(rows) < 5:
+            return None
 
-        if price_row and shares_row and price_row[0] and shares_row[0]:
-            market_cap = price_row[0] * shares_row[0]
+        earnings = [r[0] for r in rows if r[0] is not None]
+        if not earnings:
+            return None
 
-            if inc and inc[0] and inc[0] != 0:
-                pe = market_cap / inc[0]
-                if pe < 0:
-                    pe = None
-            if bal and bal[0] and bal[0] != 0:
-                pb = market_cap / bal[0]
+        avg_earnings = sum(earnings) / len(earnings)
+        if avg_earnings <= 0:
+            return None
 
-        return pe, pb, div_yield, roe, net_margin, market_cap
+        cape = market_cap / avg_earnings
+        return round(cape, 2) if cape > 0 else None
 
-    def _build_breakdown(self, bucket_map: Dict) -> List[BucketBreakdown]:
+    def _build_breakdown(self, bucket_map: Dict, metrics_by_ticker: Dict[str, MetricSummary] = None) -> List[BucketBreakdown]:
         result = []
         for name, items in bucket_map.items():
             weight = sum(w for _, w in items)
             tickers = [t for t, _ in items]
+
+            avg_pe = avg_roe = avg_net_margin = avg_pb = None
+            if metrics_by_ticker:
+                avg_pe = self._bucket_weighted_avg(items, metrics_by_ticker, 'pe_ratio')
+                avg_roe = self._bucket_weighted_avg(items, metrics_by_ticker, 'roe')
+                avg_net_margin = self._bucket_weighted_avg(items, metrics_by_ticker, 'net_margin')
+                avg_pb = self._bucket_weighted_avg(items, metrics_by_ticker, 'pb_ratio')
+
             result.append(BucketBreakdown(
-                name=name, weight=weight, count=len(items), tickers=tickers
+                name=name, weight=weight, count=len(items), tickers=tickers,
+                avg_pe=avg_pe, avg_roe=avg_roe, avg_net_margin=avg_net_margin, avg_pb=avg_pb
             ))
         result.sort(key=lambda x: x.weight, reverse=True)
         return result
+
+    def _bucket_weighted_avg(self, items: List[Tuple[str, float]], metrics: Dict[str, MetricSummary], attr: str) -> Optional[float]:
+        numerator = 0.0
+        valid_weight = 0.0
+        for ticker, weight in items:
+            m = metrics.get(ticker)
+            if m:
+                val = getattr(m, attr, None)
+                if val is not None:
+                    numerator += weight * val
+                    valid_weight += weight
+        if valid_weight == 0:
+            return None
+        return round(numerator / valid_weight, 2)
 
     def _weighted_metric(self, holdings: List[MetricSummary], attr: str, total_weight: float) -> Optional[float]:
         if total_weight == 0:

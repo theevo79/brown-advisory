@@ -1,7 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useMemo } from "react";
+import * as XLSX from "xlsx";
 import LoadingSpinner from "@/components/LoadingSpinner";
+import TickerSearch from "@/components/TickerSearch";
 import { api } from "@/lib/api";
 import { formatNumber } from "@/lib/formatters";
 import type { BaseRateResponse } from "@/lib/types";
@@ -17,6 +19,8 @@ import {
   Legend,
   ResponsiveContainer,
   ReferenceLine,
+  Brush,
+  ReferenceArea,
 } from "recharts";
 
 const METRICS = [
@@ -36,11 +40,129 @@ export default function BaseRatePage() {
   const [ticker, setTicker] = useState("");
   const [metric, setMetric] = useState("roe");
   const [peerSelection, setPeerSelection] = useState("sector");
-  const [customPeers, setCustomPeers] = useState("");
+  const [peerList, setPeerList] = useState<string[]>([]);
   const [years, setYears] = useState(10);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<BaseRateResponse | null>(null);
+  const [zoomPreset, setZoomPreset] = useState<"full" | "core" | "iqr" | "custom">("full");
+  const [refAreaLeft, setRefAreaLeft] = useState<number | null>(null);
+  const [refAreaRight, setRefAreaRight] = useState<number | null>(null);
+  const [customDomain, setCustomDomain] = useState<[number, number] | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const addPeer = (t: string) => {
+    const upper = t.trim().toUpperCase();
+    if (upper && !peerList.includes(upper)) {
+      setPeerList((prev) => [...prev, upper]);
+    }
+  };
+
+  const removePeer = (t: string) => {
+    setPeerList((prev) => prev.filter((p) => p !== t));
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const fileName = file.name.toLowerCase();
+    const isExcel = fileName.endsWith(".xlsx") || fileName.endsWith(".xls");
+
+    const reader = new FileReader();
+
+    reader.onload = (ev) => {
+      try {
+        let tickers: string[] = [];
+
+        if (isExcel) {
+          const data = ev.target?.result;
+          const workbook = XLSX.read(data, { type: "binary" });
+          const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+          const jsonData = XLSX.utils.sheet_to_json(firstSheet, { header: 1 }) as any[][];
+
+          if (jsonData.length === 0) return;
+
+          // Look for ticker column in header row
+          const headers = jsonData[0].map((h: any) => String(h).toLowerCase().trim());
+          const tickerColIndex = headers.findIndex(
+            (h: string) => h === "ticker" || h === "tickers" || h === "symbol"
+          );
+
+          if (tickerColIndex !== -1) {
+            for (let i = 1; i < jsonData.length; i++) {
+              const row = jsonData[i];
+              if (row[tickerColIndex]) {
+                const ticker = String(row[tickerColIndex]).trim().toUpperCase();
+                if (ticker.length > 0 && ticker.includes(".")) {
+                  tickers.push(ticker);
+                }
+              }
+            }
+          } else {
+            // No header found — parse first column
+            for (let i = 0; i < jsonData.length; i++) {
+              const row = jsonData[i];
+              if (row[0]) {
+                const ticker = String(row[0]).trim().toUpperCase();
+                if (ticker.length > 0 && ticker.includes(".")) {
+                  tickers.push(ticker);
+                }
+              }
+            }
+          }
+        } else {
+          // CSV / TXT
+          const text = ev.target?.result as string;
+          if (!text) return;
+
+          const lines = text.split(/[\r\n]+/).filter((line) => line.trim().length > 0);
+          if (lines.length === 0) return;
+
+          const firstLine = lines[0].toLowerCase();
+          const delimiter = firstLine.includes("\t") ? "\t" : ",";
+          const headers = lines[0].split(delimiter).map((h) => h.trim().toLowerCase());
+
+          const tickerColIndex = headers.findIndex(
+            (h) => h === "ticker" || h === "tickers" || h === "symbol"
+          );
+
+          if (tickerColIndex !== -1) {
+            for (let i = 1; i < lines.length; i++) {
+              const columns = lines[i].split(delimiter);
+              if (columns[tickerColIndex]) {
+                const ticker = columns[tickerColIndex].trim().replace(/^["']|["']$/g, "").toUpperCase();
+                if (ticker.length > 0 && ticker.includes(".")) {
+                  tickers.push(ticker);
+                }
+              }
+            }
+          } else {
+            // Simple list
+            tickers = text
+              .split(/[\n,\t]/)
+              .map((t) => t.trim().replace(/^["']|["']$/g, "").toUpperCase())
+              .filter((t) => t.length > 0 && t.includes("."));
+          }
+        }
+
+        if (tickers.length > 0) {
+          const unique = Array.from(new Set([...peerList, ...tickers]));
+          setPeerList(unique);
+        }
+      } catch {
+        // Silent fail
+      }
+    };
+
+    if (isExcel) {
+      reader.readAsBinaryString(file);
+    } else {
+      reader.readAsText(file, "UTF-8");
+    }
+
+    e.target.value = "";
+  };
 
   const handleAnalyze = async () => {
     if (!ticker.trim()) {
@@ -63,15 +185,14 @@ export default function BaseRatePage() {
         years,
       };
 
-      if (peerSelection === "custom" && customPeers.trim()) {
-        request.custom_peers = customPeers
-          .split(/[,\n]/)
-          .map((t: string) => t.trim().toUpperCase())
-          .filter((t: string) => t.length > 0);
+      if (peerSelection === "custom" && peerList.length > 0) {
+        request.custom_peers = peerList;
       }
 
       const response = await api.analyzeBaseRate(request);
       setResult(response);
+      setZoomPreset("full");
+      setCustomDomain(null);
     } catch (err: any) {
       setError(err.message || "Failed to analyze base rate");
       setResult(null);
@@ -82,6 +203,82 @@ export default function BaseRatePage() {
 
   const isValidNumber = (val: any): val is number =>
     val !== null && val !== undefined && typeof val === "number" && isFinite(val);
+
+  // Re-bin raw values within a given range
+  const buildHistogram = (values: number[], rangeMin: number, rangeMax: number, numBins = 30) => {
+    const filtered = values.filter((v) => v >= rangeMin && v <= rangeMax);
+    if (filtered.length === 0) return [];
+    const binWidth = (rangeMax - rangeMin) / numBins;
+    const bins: { bin: number; count: number; binStart: number; binEnd: number }[] = [];
+    for (let i = 0; i < numBins; i++) {
+      const binStart = rangeMin + i * binWidth;
+      const binEnd = rangeMin + (i + 1) * binWidth;
+      const count = filtered.filter((v) =>
+        i === numBins - 1 ? v >= binStart && v <= binEnd : v >= binStart && v < binEnd
+      ).length;
+      bins.push({
+        bin: +((binStart + binEnd) / 2).toFixed(2),
+        count,
+        binStart: +binStart.toFixed(2),
+        binEnd: +binEnd.toFixed(2),
+      });
+    }
+    return bins;
+  };
+
+  const displayHistData = useMemo(() => {
+    if (!result?.peer_distribution) return [];
+    const dist = result.peer_distribution;
+    const raw = dist.raw_values;
+
+    if (zoomPreset === "full") {
+      // Use the server-provided histogram (already IQR-based winsorization)
+      if (!dist.histogram_counts?.length) return [];
+      return dist.histogram_counts.map((count: number, i: number) => ({
+        bin: +((dist.histogram_bins[i] + dist.histogram_bins[i + 1]) / 2).toFixed(2),
+        count,
+        binStart: dist.histogram_bins[i],
+        binEnd: dist.histogram_bins[i + 1],
+      }));
+    }
+
+    // For zoom presets, re-bin from raw values
+    if (!raw?.length) return [];
+
+    let rangeMin: number, rangeMax: number;
+    if (zoomPreset === "custom" && customDomain) {
+      [rangeMin, rangeMax] = customDomain;
+    } else if (zoomPreset === "iqr") {
+      rangeMin = dist.q1;
+      rangeMax = dist.q3;
+    } else {
+      // "core" = ±1.5 IQR
+      const iqr = dist.q3 - dist.q1;
+      rangeMin = dist.q1 - 1.5 * iqr;
+      rangeMax = dist.q3 + 1.5 * iqr;
+    }
+    return buildHistogram(raw, rangeMin, rangeMax);
+  }, [result, zoomPreset, customDomain]);
+
+  const handleChartMouseDown = (e: any) => {
+    if (e?.activeLabel != null) setRefAreaLeft(e.activeLabel);
+  };
+  const handleChartMouseMove = (e: any) => {
+    if (refAreaLeft != null && e?.activeLabel != null) setRefAreaRight(e.activeLabel);
+  };
+  const handleChartMouseUp = () => {
+    if (refAreaLeft != null && refAreaRight != null && refAreaLeft !== refAreaRight) {
+      const [left, right] = [Math.min(refAreaLeft, refAreaRight), Math.max(refAreaLeft, refAreaRight)];
+      setCustomDomain([left, right]);
+      setZoomPreset("custom");
+    }
+    setRefAreaLeft(null);
+    setRefAreaRight(null);
+  };
+  const resetZoom = () => {
+    setZoomPreset("full");
+    setCustomDomain(null);
+  };
 
   return (
     <div>
@@ -99,13 +296,11 @@ export default function BaseRatePage() {
             <label className="block text-sm font-medium text-ba-navy mb-1">
               Ticker (SYMBOL.EXCHANGE)
             </label>
-            <input
-              type="text"
+            <TickerSearch
               value={ticker}
-              onChange={(e) => setTicker(e.target.value)}
+              onChange={setTicker}
+              onSelect={(t) => setTicker(t)}
               placeholder="e.g., MSFT.US"
-              className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:border-ba-accent focus:ring-1 focus:ring-ba-accent outline-none"
-              onKeyDown={(e) => e.key === "Enter" && handleAnalyze()}
             />
           </div>
           <div>
@@ -157,15 +352,66 @@ export default function BaseRatePage() {
         {peerSelection === "custom" && (
           <div className="mb-4">
             <label className="block text-sm font-medium text-ba-navy mb-1">
-              Custom Peer Tickers (comma or newline separated)
+              Add Peers
             </label>
-            <textarea
-              value={customPeers}
-              onChange={(e) => setCustomPeers(e.target.value)}
-              rows={3}
-              placeholder="AAPL.US, GOOGL.US, AMZN.US"
-              className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:border-ba-accent focus:ring-1 focus:ring-ba-accent outline-none font-mono"
-            />
+            <div className="flex gap-2 mb-2">
+              <div className="flex-1">
+                <TickerSearch
+                  onSelect={addPeer}
+                  placeholder="Search for a peer company..."
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="px-3 py-2 text-sm border border-gray-300 rounded hover:bg-gray-50 text-ba-navy whitespace-nowrap"
+              >
+                Upload File
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".csv,.txt,.xlsx,.xls"
+                onChange={handleFileUpload}
+                className="hidden"
+              />
+            </div>
+            {peerList.length > 0 && (
+              <div className="border border-gray-200 rounded p-2">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs text-gray-400">{peerList.length} peer{peerList.length !== 1 ? "s" : ""}</span>
+                  <button
+                    type="button"
+                    onClick={() => setPeerList([])}
+                    className="text-xs text-red-500 hover:text-red-700"
+                  >
+                    Clear all
+                  </button>
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {peerList.map((p) => (
+                    <span
+                      key={p}
+                      className="inline-flex items-center gap-1 bg-gray-100 text-ba-navy text-xs font-mono px-2 py-1 rounded"
+                    >
+                      {p}
+                      <button
+                        type="button"
+                        onClick={() => removePeer(p)}
+                        className="text-gray-400 hover:text-red-500 ml-0.5"
+                      >
+                        &times;
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            {peerList.length === 0 && (
+              <p className="text-xs text-gray-400 mt-1">
+                Search to add peers individually, or upload a CSV/Excel file with SYMBOL.EXCHANGE tickers.
+              </p>
+            )}
           </div>
         )}
 
@@ -253,24 +499,64 @@ export default function BaseRatePage() {
 
           {/* Distribution Chart */}
           <div className="ba-card">
-            <h3 className="font-serif text-lg font-semibold text-ba-navy mb-3">
-              Peer Distribution ({result.years_analyzed} years, {result.peer_distribution.total_data_points} data points)
-            </h3>
-            {result.peer_distribution.histogram_counts?.length > 0 ? (
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-serif text-lg font-semibold text-ba-navy">
+                Peer Distribution ({result.years_analyzed} years, {result.peer_distribution.total_data_points} data points)
+              </h3>
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-gray-400 mr-1">Zoom:</span>
+                {([
+                  { key: "full", label: "Full" },
+                  { key: "core", label: "\u00b11.5 IQR" },
+                  { key: "iqr", label: "IQR" },
+                ] as const).map((p) => (
+                  <button
+                    key={p.key}
+                    onClick={() => { setZoomPreset(p.key); setCustomDomain(null); }}
+                    className={`px-2.5 py-1 text-xs rounded transition-colors ${
+                      zoomPreset === p.key
+                        ? "bg-ba-navy text-white"
+                        : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                    }`}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+                {zoomPreset === "custom" && (
+                  <button
+                    onClick={resetZoom}
+                    className="px-2.5 py-1 text-xs rounded bg-ba-accent text-white"
+                  >
+                    Reset
+                  </button>
+                )}
+              </div>
+            </div>
+            {zoomPreset !== "full" && (
+              <p className="text-xs text-gray-400 mb-2">
+                {zoomPreset === "iqr"
+                  ? `Showing Q1\u2013Q3 range: ${formatNumber(result.peer_distribution.q1, 1)} to ${formatNumber(result.peer_distribution.q3, 1)}`
+                  : zoomPreset === "core"
+                  ? `Showing core range (\u00b11.5\u00d7IQR from quartiles)`
+                  : "Drag-selected range"
+                }
+                {" "}\u2014 click-drag on chart to custom zoom
+              </p>
+            )}
+            {zoomPreset === "full" && (
+              <p className="text-xs text-gray-400 mb-2">
+                Tip: click and drag on the chart to zoom into a custom range
+              </p>
+            )}
+            {displayHistData.length > 0 ? (
               <>
-                <ResponsiveContainer width="100%" height={300}>
+                <ResponsiveContainer width="100%" height={320}>
                   <BarChart
-                    data={result.peer_distribution.histogram_counts.map((count: number, i: number) => ({
-                      bin: Math.round(
-                        (result.peer_distribution.histogram_bins[i] +
-                          result.peer_distribution.histogram_bins[i + 1]) /
-                          2
-                      ),
-                      count,
-                      binStart: result.peer_distribution.histogram_bins[i],
-                      binEnd: result.peer_distribution.histogram_bins[i + 1],
-                    }))}
+                    data={displayHistData}
                     margin={{ top: 20, right: 30, left: 20, bottom: 20 }}
+                    onMouseDown={handleChartMouseDown}
+                    onMouseMove={handleChartMouseMove}
+                    onMouseUp={handleChartMouseUp}
                   >
                     <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
                     <XAxis
@@ -279,6 +565,7 @@ export default function BaseRatePage() {
                       domain={["dataMin", "dataMax"]}
                       stroke="#6B7280"
                       tick={{ fontSize: 11 }}
+                      tickFormatter={(v) => formatNumber(v, 1)}
                       label={{ value: result.metric_name, position: "insideBottom", offset: -10, fontSize: 12 }}
                     />
                     <YAxis
@@ -316,7 +603,7 @@ export default function BaseRatePage() {
                           fontSize: 11,
                           fontWeight: 600,
                         }}
-                        ifOverflow="extendDomain"
+                        ifOverflow="hidden"
                       />
                     )}
                     {isValidNumber(result.peer_distribution.mean) && (
@@ -332,7 +619,7 @@ export default function BaseRatePage() {
                           fontSize: 11,
                           fontWeight: 600,
                         }}
-                        ifOverflow="extendDomain"
+                        ifOverflow="hidden"
                       />
                     )}
                     {isValidNumber(result.peer_distribution.median) && (
@@ -348,12 +635,21 @@ export default function BaseRatePage() {
                           fontSize: 11,
                           fontWeight: 600,
                         }}
-                        ifOverflow="extendDomain"
+                        ifOverflow="hidden"
+                      />
+                    )}
+                    {refAreaLeft != null && refAreaRight != null && (
+                      <ReferenceArea
+                        x1={refAreaLeft}
+                        x2={refAreaRight}
+                        strokeOpacity={0.3}
+                        fill="#005ba5"
+                        fillOpacity={0.15}
                       />
                     )}
                   </BarChart>
                 </ResponsiveContainer>
-                <div className="mt-4 grid grid-cols-4 gap-4 text-center text-sm">
+                <div className="mt-4 grid grid-cols-5 gap-4 text-center text-sm">
                   <div>
                     <p className="text-xs text-gray-400 uppercase">Mean</p>
                     <p className="font-semibold text-ba-navy">{formatNumber(result.peer_distribution.mean, 1)}</p>
@@ -365,6 +661,12 @@ export default function BaseRatePage() {
                   <div>
                     <p className="text-xs text-gray-400 uppercase">Std Dev</p>
                     <p className="font-semibold text-ba-navy">{formatNumber(result.peer_distribution.std, 1)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-400 uppercase">Q1 / Q3</p>
+                    <p className="font-semibold text-ba-navy">
+                      {formatNumber(result.peer_distribution.q1, 1)} / {formatNumber(result.peer_distribution.q3, 1)}
+                    </p>
                   </div>
                   <div>
                     <p className="text-xs text-gray-400 uppercase">Company Rank</p>

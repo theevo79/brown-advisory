@@ -39,6 +39,10 @@ class BucketBreakdown(BaseModel):
     weight: float
     count: int
     tickers: List[str]
+    avg_pe: Optional[float] = None
+    avg_roe: Optional[float] = None
+    avg_net_margin: Optional[float] = None
+    avg_pb: Optional[float] = None
 
 
 class MetricSummary(BaseModel):
@@ -53,17 +57,30 @@ class MetricSummary(BaseModel):
     div_yield: Optional[float] = None
     roe: Optional[float] = None
     net_margin: Optional[float] = None
+    eps: Optional[float] = None
+    cape_ratio: Optional[float] = None
+
+
+class TagResponse(BaseModel):
+    id: int
+    name: str
+    colour: str
+    tag_type: str = "General"
+    tickers: List[str] = []
 
 
 class VisualizationResponse(BaseModel):
     holdings: List[MetricSummary]
     sector_breakdown: List[BucketBreakdown]
     country_breakdown: List[BucketBreakdown]
+    market_cap_breakdown: List[BucketBreakdown] = []
     total_weight: float
     num_holdings: int
     weighted_pe: Optional[float] = None
     weighted_pb: Optional[float] = None
     weighted_div_yield: Optional[float] = None
     weighted_roe: Optional[float] = None
+    weighted_net_margin: Optional[float] = None
+    weighted_cape: Optional[float] = None
     top_10_weight: float
     hhi: float

@@ -21,22 +21,60 @@ class MomentumService:
 
     def get_momentum_for_companies(self, company_ids: list[int], period: str = '3m') -> dict:
         """
-        Calculate trailing price returns for a list of companies.
+        Calculate trailing price returns for a list of companies using batch query.
 
         Returns dict of company_id -> return percentage.
         """
         if period not in PERIOD_DAYS:
             raise ValueError(f"Invalid period: {period}. Use: {list(PERIOD_DAYS.keys())}")
 
+        if not company_ids:
+            return {}
+
         days = PERIOD_DAYS[period]
         end_date = datetime.now().strftime('%Y-%m-%d')
         start_date = (datetime.now() - timedelta(days=days + 10)).strftime('%Y-%m-%d')
+        target_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
 
+        # Process in chunks to avoid SQLite variable limit
+        CHUNK_SIZE = 500
         results = {}
-        for company_id in company_ids:
-            ret = self._calculate_return(company_id, start_date, end_date, days)
-            if ret is not None:
-                results[company_id] = ret
+        for i in range(0, len(company_ids), CHUNK_SIZE):
+            chunk = company_ids[i:i + CHUNK_SIZE]
+            placeholders = ','.join(['?' for _ in chunk])
+
+            # Get latest price per company (one row each)
+            latest_rows = self.db.fetchall(f"""
+                SELECT company_id, adjusted_close
+                FROM daily_prices
+                WHERE company_id IN ({placeholders})
+                  AND trade_date <= ?
+                  AND adjusted_close > 0
+                GROUP BY company_id
+                HAVING trade_date = MAX(trade_date)
+            """, tuple(chunk) + (end_date,))
+
+            latest_by_cid = {r['company_id']: r['adjusted_close'] for r in latest_rows}
+
+            # Get price closest to target date (last price on or before target)
+            start_rows = self.db.fetchall(f"""
+                SELECT company_id, adjusted_close
+                FROM daily_prices
+                WHERE company_id IN ({placeholders})
+                  AND trade_date <= ?
+                  AND trade_date >= ?
+                  AND adjusted_close > 0
+                GROUP BY company_id
+                HAVING trade_date = MIN(trade_date)
+            """, tuple(chunk) + (target_date, start_date))
+
+            start_by_cid = {r['company_id']: r['adjusted_close'] for r in start_rows}
+
+            for cid in chunk:
+                latest_price = latest_by_cid.get(cid)
+                start_price = start_by_cid.get(cid)
+                if latest_price and start_price and start_price > 0:
+                    results[cid] = ((latest_price - start_price) / start_price) * 100
 
         return results
 

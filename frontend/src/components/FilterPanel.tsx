@@ -1,7 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { api } from "@/lib/api";
+import { FOCUS_PRESETS, FOCUS_METRICS } from "@/lib/constants";
+import MarketCapSlider from "@/components/MarketCapSlider";
 import type { RegionInfo } from "@/lib/types";
 
 interface FilterPanelProps {
@@ -13,6 +15,9 @@ interface FilterPanelProps {
     advMin?: number;
     throughCycleYears: number;
     minYears: number;
+    valuationMetric?: string;
+    valuationPercentileMin?: number;
+    valuationPercentileMax?: number;
   }) => void;
   loading?: boolean;
 }
@@ -45,22 +50,18 @@ const METRIC_GROUPS = {
   ],
 };
 
-const MARKET_CAP_PRESETS = [
-  { label: "All", min: undefined, max: undefined },
-  { label: "Mega (>$200B)", min: 200e9, max: undefined },
-  { label: "Large ($10B-$200B)", min: 10e9, max: 200e9 },
-  { label: "Mid ($2B-$10B)", min: 2e9, max: 10e9 },
-  { label: "Small (<$2B)", min: undefined, max: 2e9 },
-];
 
 export default function FilterPanel({ onSubmit, loading }: FilterPanelProps) {
   const [regions, setRegions] = useState<RegionInfo[]>([]);
-  const [selectedRegion, setSelectedRegion] = useState("dm_us");
+  const [selectedRegion, setSelectedRegion] = useState("global_ex_us");
   const [selectedMetrics, setSelectedMetrics] = useState<string[]>(["pe_ratio", "roe"]);
-  const [marketCapPreset, setMarketCapPreset] = useState(0);
+  const [mcapMin, setMcapMin] = useState<number | undefined>(1e9);
+  const [mcapMax, setMcapMax] = useState<number | undefined>(undefined);
   const [advMin, setAdvMin] = useState<string>("");
   const [throughCycleYears, setThroughCycleYears] = useState(10);
   const [minYears, setMinYears] = useState(5);
+  const [focusMetric, setFocusMetric] = useState("");
+  const [focusPreset, setFocusPreset] = useState(0);
 
   useEffect(() => {
     api.getRegions().then(setRegions).catch(console.error);
@@ -72,16 +73,36 @@ export default function FilterPanel({ onSubmit, loading }: FilterPanelProps) {
     );
   };
 
+  const handleMcapChange = useCallback((min: number | undefined, max: number | undefined) => {
+    setMcapMin(min);
+    setMcapMax(max);
+  }, []);
+
   const handleSubmit = () => {
-    const preset = MARKET_CAP_PRESETS[marketCapPreset];
+    const fp = FOCUS_PRESETS[focusPreset];
+    const hasFocus = focusMetric && fp.value !== "none";
+
+    // Ensure focus metric is included in the metrics list
+    let metricsToSend = [...selectedMetrics];
+    if (hasFocus && focusMetric && !metricsToSend.includes(focusMetric)) {
+      metricsToSend.push(focusMetric);
+    }
+
     onSubmit({
       region: selectedRegion,
-      metrics: selectedMetrics,
-      marketCapMin: preset.min,
-      marketCapMax: preset.max,
+      metrics: metricsToSend,
+      marketCapMin: mcapMin,
+      marketCapMax: mcapMax,
       advMin: advMin ? parseFloat(advMin) * 1e6 : undefined,
       throughCycleYears,
       minYears,
+      ...(hasFocus && focusMetric
+        ? {
+            valuationMetric: focusMetric,
+            valuationPercentileMin: fp.min,
+            valuationPercentileMax: fp.max,
+          }
+        : {}),
     });
   };
 
@@ -104,16 +125,12 @@ export default function FilterPanel({ onSubmit, loading }: FilterPanelProps) {
 
         {/* Market Cap */}
         <div>
-          <label className="block text-sm font-medium text-ba-navy mb-2">Market Cap</label>
-          <select
-            value={marketCapPreset}
-            onChange={(e) => setMarketCapPreset(parseInt(e.target.value))}
-            className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:border-ba-accent focus:ring-1 focus:ring-ba-accent outline-none"
-          >
-            {MARKET_CAP_PRESETS.map((p, i) => (
-              <option key={i} value={i}>{p.label}</option>
-            ))}
-          </select>
+          <label className="block text-sm font-medium text-ba-navy mb-2">Market Cap Range</label>
+          <MarketCapSlider
+            minValue={mcapMin || 100e6}
+            maxValue={mcapMax || null}
+            onChange={handleMcapChange}
+          />
         </div>
 
         {/* ADV */}
@@ -124,8 +141,10 @@ export default function FilterPanel({ onSubmit, loading }: FilterPanelProps) {
             value={advMin}
             onChange={(e) => setAdvMin(e.target.value)}
             placeholder="e.g. 1"
-            className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:border-ba-accent focus:ring-1 focus:ring-ba-accent outline-none"
+            disabled
+            className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:border-ba-accent focus:ring-1 focus:ring-ba-accent outline-none bg-gray-50 text-gray-400 cursor-not-allowed"
           />
+          <p className="text-xs text-gray-400 mt-1 italic">No ADV data available yet</p>
         </div>
 
         {/* Through-cycle config */}
@@ -186,6 +205,41 @@ export default function FilterPanel({ onSubmit, loading }: FilterPanelProps) {
         </div>
       </div>
 
+      {/* Focus filter */}
+      <div className="mt-4 pt-4 border-t border-gray-100">
+        <label className="block text-sm font-medium text-ba-navy mb-2">Focus Filter</label>
+        <div className="flex items-center gap-3 flex-wrap">
+          <select
+            value={focusMetric}
+            onChange={(e) => setFocusMetric(e.target.value)}
+            className="border border-gray-300 rounded px-3 py-2 text-sm focus:border-ba-accent outline-none"
+          >
+            <option value="">No focus filter</option>
+            {FOCUS_METRICS.map((m) => (
+              <option key={m.id} value={m.id}>{m.name}</option>
+            ))}
+          </select>
+          {focusMetric && (
+            <div className="flex gap-1">
+              {FOCUS_PRESETS.map((p, i) => (
+                <button
+                  key={p.value}
+                  type="button"
+                  onClick={() => setFocusPreset(i)}
+                  className={`px-3 py-1.5 text-xs rounded ${
+                    focusPreset === i
+                      ? "bg-ba-navy text-white"
+                      : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                  }`}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* Submit */}
       <div className="mt-4 flex items-center gap-4">
         <button onClick={handleSubmit} disabled={loading || selectedMetrics.length === 0} className="ba-btn-primary disabled:opacity-50">
@@ -193,6 +247,9 @@ export default function FilterPanel({ onSubmit, loading }: FilterPanelProps) {
         </button>
         <span className="text-sm text-gray-400">
           {selectedMetrics.length} metric{selectedMetrics.length !== 1 ? "s" : ""} selected
+          {focusMetric && FOCUS_PRESETS[focusPreset].value !== "none" && (
+            <> | Focus: {FOCUS_METRICS.find((m) => m.id === focusMetric)?.name}, {FOCUS_PRESETS[focusPreset].label}</>
+          )}
         </span>
       </div>
     </div>

@@ -1,7 +1,15 @@
 """Pydantic models for heatmap API."""
 
-from typing import Optional, List
+from typing import Optional, List, Dict
 from pydantic import BaseModel
+
+
+class PortfolioHeatmapRequest(BaseModel):
+    holdings: List[Dict]  # [{ticker, weight}]
+    metric: str = "cape"
+    through_cycle_years: int = 10
+    min_years: int = 5
+    momentum_period: Optional[str] = None  # "1m", "3m", "6m", "12m"
 
 
 class HeatmapRequest(BaseModel):
@@ -14,6 +22,9 @@ class HeatmapRequest(BaseModel):
     adv_usd_min: Optional[float] = None
     adv_usd_max: Optional[float] = None
     momentum_period: Optional[str] = None  # "1m", "3m", "6m", "12m"
+    valuation_metric: Optional[str] = None
+    valuation_percentile_min: Optional[float] = None
+    valuation_percentile_max: Optional[float] = None
 
 
 class HeatmapCell(BaseModel):

@@ -23,6 +23,12 @@ class HoldingImpact(BaseModel):
     current_weight: float
     new_weight: float
     delta: float
+    market_cap_usd: Optional[float] = None
+    pe_ratio: Optional[float] = None
+    pb_ratio: Optional[float] = None
+    roe: Optional[float] = None
+    net_margin: Optional[float] = None
+    cape_ratio: Optional[float] = None
 
 
 class BucketDelta(BaseModel):
@@ -36,6 +42,7 @@ class ConstructionResponse(BaseModel):
     holdings: List[HoldingImpact]
     sector_deltas: List[BucketDelta]
     country_deltas: List[BucketDelta]
+    market_cap_deltas: List[BucketDelta] = []
     current_total: float
     new_total: float
     num_additions: int
@@ -45,3 +52,13 @@ class ConstructionResponse(BaseModel):
     new_top10: float
     current_hhi: float
     new_hhi: float
+    current_weighted_pe: Optional[float] = None
+    current_weighted_cape: Optional[float] = None
+    current_weighted_pb: Optional[float] = None
+    current_weighted_roe: Optional[float] = None
+    current_weighted_net_margin: Optional[float] = None
+    weighted_pe: Optional[float] = None
+    weighted_cape: Optional[float] = None
+    weighted_pb: Optional[float] = None
+    weighted_roe: Optional[float] = None
+    weighted_net_margin: Optional[float] = None

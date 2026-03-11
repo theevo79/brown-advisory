@@ -48,7 +48,7 @@ class DatabaseClient:
         query = f"""
             SELECT c.company_id, c.ticker, c.exchange_code, c.full_name,
                    c.sector, c.industry, c.country, c.currency,
-                   m.market_cap, m.adv_usd_20d
+                   m.market_cap, m.market_cap_usd, m.adv_usd_20d
             FROM companies c
             INNER JOIN market_data m ON c.company_id = m.company_id
             INNER JOIN (
@@ -74,6 +74,7 @@ class DatabaseClient:
                 'country': row['country'],
                 'currency': row['currency'],
                 'market_cap': row['market_cap'],
+                'market_cap_usd': row['market_cap_usd'],
                 'adv_usd_20d': row['adv_usd_20d']
             })
 
@@ -113,6 +114,114 @@ class DatabaseClient:
         """
         rows = self.db.fetchall(query, (company_id, years))
         return [dict(row) for row in rows]
+
+    def get_bulk_fundamentals(self, company_ids: list[int]) -> dict:
+        """Batch-fetch latest fundamentals for many companies in 3 queries instead of 3N."""
+        if not company_ids:
+            return {}
+
+        placeholders = ','.join(['?' for _ in company_ids])
+
+        # Latest income statement per company
+        income_rows = self.db.fetchall(f"""
+            SELECT i.* FROM income_statements i
+            INNER JOIN (
+                SELECT company_id, MAX(fiscal_year) as max_fy
+                FROM income_statements
+                WHERE company_id IN ({placeholders})
+                GROUP BY company_id
+            ) latest ON i.company_id = latest.company_id AND i.fiscal_year = latest.max_fy
+        """, tuple(company_ids))
+
+        income_by_id = {}
+        for row in income_rows:
+            income_by_id[row['company_id']] = dict(row)
+
+        # Latest balance sheet per company (matched to income fiscal year)
+        balance_rows = self.db.fetchall(f"""
+            SELECT b.* FROM balance_sheets b
+            INNER JOIN (
+                SELECT company_id, MAX(fiscal_year) as max_fy
+                FROM balance_sheets
+                WHERE company_id IN ({placeholders})
+                GROUP BY company_id
+            ) latest ON b.company_id = latest.company_id AND b.fiscal_year = latest.max_fy
+        """, tuple(company_ids))
+
+        balance_by_id = {}
+        for row in balance_rows:
+            balance_by_id[row['company_id']] = dict(row)
+
+        # Latest cash flow per company
+        cashflow_rows = self.db.fetchall(f"""
+            SELECT cf.* FROM cash_flows cf
+            INNER JOIN (
+                SELECT company_id, MAX(fiscal_year) as max_fy
+                FROM cash_flows
+                WHERE company_id IN ({placeholders})
+                GROUP BY company_id
+            ) latest ON cf.company_id = latest.company_id AND cf.fiscal_year = latest.max_fy
+        """, tuple(company_ids))
+
+        cashflow_by_id = {}
+        for row in cashflow_rows:
+            cashflow_by_id[row['company_id']] = dict(row)
+
+        # Assemble per company
+        result = {}
+        for cid in company_ids:
+            income = income_by_id.get(cid)
+            if not income:
+                continue
+            fiscal_year = income.get('fiscal_year')
+            result[cid] = {
+                'fiscal_year': fiscal_year,
+                'income_statement': income,
+                'balance_sheet': balance_by_id.get(cid),
+                'cash_flow': cashflow_by_id.get(cid),
+            }
+        return result
+
+    def get_bulk_historical_income(self, company_ids: list[int], years: int = 10) -> dict:
+        """Batch-fetch historical income statements for many companies."""
+        if not company_ids:
+            return {}
+
+        placeholders = ','.join(['?' for _ in company_ids])
+        rows = self.db.fetchall(f"""
+            SELECT company_id, fiscal_year, net_income, ebit, ebitda,
+                   income_before_tax, tax_provision, total_revenue
+            FROM income_statements
+            WHERE company_id IN ({placeholders})
+            ORDER BY company_id, fiscal_year DESC
+        """, tuple(company_ids))
+
+        result = {}
+        for row in rows:
+            cid = row['company_id']
+            if cid not in result:
+                result[cid] = []
+            if len(result[cid]) < years:
+                result[cid].append(dict(row))
+        return result
+
+    def get_bulk_pe_ratios(self, company_ids: list[int]) -> dict:
+        """Batch-fetch pe_ratio from latest market_data for many companies."""
+        if not company_ids:
+            return {}
+        placeholders = ','.join(['?' for _ in company_ids])
+        rows = self.db.fetchall(f"""
+            SELECT m.company_id, m.pe_ratio
+            FROM market_data m
+            INNER JOIN (
+                SELECT company_id, MAX(date) as max_date
+                FROM market_data
+                WHERE company_id IN ({placeholders})
+                GROUP BY company_id
+            ) latest ON m.company_id = latest.company_id AND m.date = latest.max_date
+            WHERE m.pe_ratio IS NOT NULL
+        """, tuple(company_ids))
+        return {row['company_id']: float(row['pe_ratio']) for row in rows}
 
     def search_companies(self, query: str, limit: int = 50) -> list[dict]:
         """Search companies by ticker or name."""

@@ -15,6 +15,7 @@ class TearSheetRequest(BaseModel):
         default=["summary", "sectors", "countries", "holdings"],
         description="Sections to include"
     )
+    portfolio_name: str = Field(default="Portfolio", description="Portfolio name for header")
 
 
 @router.post("/tearsheet")
@@ -22,7 +23,7 @@ async def generate_tearsheet(request: TearSheetRequest):
     """Generate a PDF tear sheet for a portfolio."""
     service = ExportService()
     try:
-        pdf_bytes = service.generate_tearsheet(request.holdings, request.sections)
+        pdf_bytes = service.generate_tearsheet(request.holdings, request.sections, request.portfolio_name)
         return Response(
             content=pdf_bytes,
             media_type="application/pdf",

@@ -282,16 +282,21 @@ class BaseRateService:
         else:
             percentile = 50.0
 
-        winsorized_min = float(np.percentile(arr, 1))
-        winsorized_max = float(np.percentile(arr, 99))
+        q1 = float(np.percentile(arr, 25))
+        q3 = float(np.percentile(arr, 75))
+        iqr = q3 - q1
+
+        # Use IQR-based bounds (3x IQR from quartiles) for much better default histogram
+        winsorized_min = max(float(np.min(arr)), q1 - 3 * iqr)
+        winsorized_max = min(float(np.max(arr)), q3 + 3 * iqr)
         arr_winsorized = np.clip(arr, winsorized_min, winsorized_max)
         counts, bin_edges = np.histogram(arr_winsorized, bins=30)
 
         return PeerDistribution(
             min=float(np.min(arr)),
-            q1=float(np.percentile(arr, 25)),
+            q1=q1,
             median=float(np.median(arr)),
-            q3=float(np.percentile(arr, 75)),
+            q3=q3,
             max=float(np.max(arr)),
             mean=float(np.mean(arr)),
             std=float(np.std(arr)),
@@ -300,7 +305,8 @@ class BaseRateService:
             histogram_counts=[int(x) for x in counts],
             winsorized_min=winsorized_min,
             winsorized_max=winsorized_max,
-            total_data_points=len(values)
+            total_data_points=len(values),
+            raw_values=sorted([float(x) for x in arr])
         )
 
     def _calculate_probabilities(self, distribution: PeerDistribution) -> ProbabilityAnalysis:
