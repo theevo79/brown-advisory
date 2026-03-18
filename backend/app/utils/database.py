@@ -30,11 +30,11 @@ class DatabaseClient:
             params.extend(exchange_codes)
 
         if market_cap_min is not None:
-            where_clauses.append("m.market_cap >= ?")
+            where_clauses.append("m.market_cap_usd >= ?")
             params.append(market_cap_min)
 
         if market_cap_max is not None:
-            where_clauses.append("m.market_cap <= ?")
+            where_clauses.append("m.market_cap_usd <= ?")
             params.append(market_cap_max)
 
         if adv_usd_min is not None:

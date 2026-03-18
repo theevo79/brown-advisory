@@ -14,6 +14,8 @@ export const FOCUS_METRICS = [
   { id: "roe", name: "ROE" },
   { id: "ev_nopat_avg", name: "EV/NOPAT Avg" },
   { id: "ev_sales", name: "EV/Sales" },
+  { id: "net_debt_ebitda", name: "Net Debt/EBITDA" },
+  { id: "ebitda_margin", name: "EBITDA Margin" },
 ];
 
 export const CHART_COLORS = [

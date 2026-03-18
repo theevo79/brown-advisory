@@ -8,6 +8,7 @@ from app.utils.market_data import get_latest_market_cap, get_precalculated_ratio
 from app.utils.metrics_calculator import MetricsCalculator
 from app.utils.currency_converter import convert_to_usd
 from app.services.region_mapper import RegionMapper
+from app.services.momentum_service import MomentumService
 from app.models.screening import (
     ScreeningRequest, ScreeningResponse, CompanyResult, MetricValue, MetricFilter
 )
@@ -70,6 +71,12 @@ class ScreeningService:
             company['_market_cap_usd'] = mc
             valid_companies.append(company)
 
+        # Apply sector/country filters before expensive metric calculations
+        if request.sectors:
+            valid_companies = [c for c in valid_companies if c.get('sector') in request.sectors]
+        if request.countries:
+            valid_companies = [c for c in valid_companies if c['_country'] in request.countries]
+
         company_ids = [c['company_id'] for c in valid_companies]
 
         # Batch-fetch all fundamentals, historical data, and market data metrics
@@ -104,6 +111,14 @@ class ScreeningService:
                 final_results, request.valuation_metric,
                 request.valuation_percentile_min or 0,
                 request.valuation_percentile_max or 100
+            )
+
+        # Momentum percentile filtering
+        if request.momentum_period and (request.momentum_percentile_min is not None or request.momentum_percentile_max is not None):
+            final_results = self._apply_momentum_filter(
+                final_results, request.momentum_period,
+                request.momentum_percentile_min or 0,
+                request.momentum_percentile_max or 100
             )
 
         final_results.sort(key=lambda x: x.ticker)
@@ -316,7 +331,7 @@ class ScreeningService:
             if not all_values:
                 continue
 
-            lower_is_better = metric_id in ['debt_to_equity']
+            lower_is_better = metric_id in ['debt_to_equity', 'net_debt_ebitda']
             n = len(all_values)
 
             # Sort once for percentile calculation
@@ -360,6 +375,27 @@ class ScreeningService:
         return [r for r in results
                 if metric_id in r.metrics and r.metrics[metric_id].percentile is not None
                 and pmin <= r.metrics[metric_id].percentile <= pmax]
+
+    def _apply_momentum_filter(self, results: List[CompanyResult], period: str,
+                                pmin: float, pmax: float) -> List[CompanyResult]:
+        """Filter results by momentum percentile for a given period."""
+        company_ids = [r.company_id for r in results]
+        if not company_ids:
+            return results
+
+        momentum_svc = MomentumService()
+        try:
+            mom_data = momentum_svc.get_momentum_percentiles(company_ids, period)
+        finally:
+            momentum_svc.close()
+
+        filtered = []
+        for r in results:
+            mom = mom_data.get(r.company_id)
+            if mom and mom.get('percentile') is not None:
+                if pmin <= mom['percentile'] <= pmax:
+                    filtered.append(r)
+        return filtered
 
     def close(self):
         self.db.close()

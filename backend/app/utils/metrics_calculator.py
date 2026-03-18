@@ -93,6 +93,36 @@ class MetricsCalculator:
         return (short_term_debt or 0) + (long_term_debt or 0) - (cash or 0)
 
     @staticmethod
+    def calculate_net_debt_ebitda(net_debt, ebitda, company_country=None):
+        """Net Debt / EBITDA leverage ratio."""
+        if ebitda is None or ebitda <= 0:
+            return None
+        if net_debt is None:
+            return None
+        ebitda_usd = convert_to_usd(ebitda, company_country, is_financial_statement=True)
+        net_debt_usd = convert_to_usd(net_debt, company_country, is_financial_statement=True) if net_debt else 0
+        if not ebitda_usd or ebitda_usd <= 0:
+            return None
+        ratio = net_debt_usd / ebitda_usd
+        if ratio < -20 or ratio > 50:
+            return None
+        return round(ratio, 2)
+
+    @staticmethod
+    def calculate_ebitda_margin(ebitda, revenue):
+        """EBITDA Margin = EBITDA / Revenue * 100."""
+        if ebitda is None or not revenue or revenue <= 0:
+            return None
+        return round((ebitda / revenue) * 100, 2)
+
+    @staticmethod
+    def calculate_dividend_yield(dividends_per_share, price):
+        """Dividend yield = DPS / Price * 100."""
+        if not dividends_per_share or dividends_per_share <= 0 or not price or price <= 0:
+            return None
+        return round((dividends_per_share / price) * 100, 2)
+
+    @staticmethod
     def calculate_ev_sales(market_cap, net_debt, revenue, company_country=None):
         if not market_cap or not revenue or revenue <= 0:
             return None
@@ -250,9 +280,11 @@ class MetricsCalculator:
             'roe': cls.calculate_roe(net_income, total_equity),
             'roa': cls.calculate_roa(net_income, total_assets),
             'ebit_margin': cls.calculate_ebit_margin(ebit, total_revenue),
+            'ebitda_margin': cls.calculate_ebitda_margin(ebitda, total_revenue),
             'net_margin': cls.calculate_net_margin(net_income, total_revenue),
             'current_ratio': cls.calculate_current_ratio(current_assets, current_liabilities),
             'debt_to_equity': cls.calculate_debt_to_equity(total_liabilities, total_equity),
+            'net_debt_ebitda': cls.calculate_net_debt_ebitda(net_debt, ebitda, company_country),
         }
 
         if historical_data and len(historical_data) >= min_years:

@@ -16,6 +16,8 @@ const METRICS = [
   { id: "ev_ebitda", name: "EV/EBITDA" },
   { id: "roe", name: "ROE" },
   { id: "ev_ebit_avg", name: "EV/EBIT Avg" },
+  { id: "net_debt_ebitda", name: "Net Debt/EBITDA" },
+  { id: "ebitda_margin", name: "EBITDA Margin" },
 ];
 
 const MOMENTUM_PERIODS = [
@@ -43,6 +45,10 @@ export default function HeatmapPage() {
   const [focusPreset, setFocusPreset] = useState(0);
   const [mcapMin, setMcapMin] = useState<number | undefined>(1e9);
   const [mcapMax, setMcapMax] = useState<number | undefined>(undefined);
+  // 2a: Weighting toggle
+  const [weighting, setWeighting] = useState<"equal" | "market_cap">("equal");
+  // 2h: Inversion mode
+  const [showUnowned, setShowUnowned] = useState(false);
 
   // Portfolio state
   const [portfolioHoldings, setPortfolioHoldings] = useState<PortfolioHolding[]>([]);
@@ -74,12 +80,31 @@ export default function HeatmapPage() {
     })();
   }, []);
 
-  // Build portfolio ticker set for highlighting (match both "AAPL.US" and "AAPL" formats)
+  // 2g: When focus metric changes, auto-update the main metric selector
+  const handleFocusChange = (newFocusMetric: string) => {
+    setFocusMetric(newFocusMetric);
+    if (newFocusMetric) {
+      // If the focus metric is also available as a main metric, sync it
+      if (METRICS.some((m) => m.id === newFocusMetric)) {
+        setMetric(newFocusMetric);
+      }
+    }
+  };
+
+  // 2g: When main metric changes, auto-update focus if it's in focus list
+  const handleMetricChange = (newMetric: string) => {
+    setMetric(newMetric);
+    if (FOCUS_METRICS.some((m) => m.id === newMetric)) {
+      setFocusMetric(newMetric);
+    }
+  };
+
+  // Build portfolio ticker set for highlighting
   const portfolioTickers = useMemo(() => {
     const set = new Set<string>();
     for (const h of portfolioHoldings) {
-      set.add(h.ticker);                          // "AAPL.US"
-      set.add(h.ticker.split(".")[0]);             // "AAPL"
+      set.add(h.ticker);
+      set.add(h.ticker.split(".")[0]);
     }
     return set;
   }, [portfolioHoldings]);
@@ -112,6 +137,46 @@ export default function HeatmapPage() {
     }
     return rows;
   }, [heatmapData, portfolioTickers]);
+
+  // 2h: Build "unowned" heatmap data — filter to stocks NOT in portfolio
+  const unownedHeatmapData = useMemo(() => {
+    if (!showUnowned || !heatmapData) return null;
+
+    const filteredCompanies: Record<string, any[]> = {};
+    for (const [key, comps] of Object.entries(heatmapData.companies as Record<string, any[]>)) {
+      const filtered = comps.filter((c: any) => !portfolioTickers.has(c.ticker));
+      if (filtered.length > 0) {
+        filteredCompanies[key] = filtered;
+      }
+    }
+
+    // Rebuild matrix/counts from filtered companies
+    const countries = heatmapData.countries as string[];
+    const sectors = heatmapData.sectors as string[];
+    const matrix: (number | null)[][] = [];
+    const counts: number[][] = [];
+
+    for (const country of countries) {
+      const row: (number | null)[] = [];
+      const countRow: number[] = [];
+      for (const sector of sectors) {
+        const cellKey = `${country}_${sector}`;
+        const cellComps = filteredCompanies[cellKey] || [];
+        if (cellComps.length > 0) {
+          const vals = cellComps.map((c: any) => c.metric_value).filter((v: any) => v != null);
+          row.push(vals.length > 0 ? Math.round((vals.reduce((a: number, b: number) => a + b, 0) / vals.length) * 100) / 100 : null);
+          countRow.push(cellComps.length);
+        } else {
+          row.push(null);
+          countRow.push(0);
+        }
+      }
+      matrix.push(row);
+      counts.push(countRow);
+    }
+
+    return { ...heatmapData, companies: filteredCompanies, matrix, counts, total_companies: Object.values(filteredCompanies).reduce((s, c) => s + c.length, 0) };
+  }, [showUnowned, heatmapData, portfolioTickers]);
 
   // Sorted + filtered rows
   const displayRows = useMemo(() => {
@@ -159,6 +224,7 @@ export default function HeatmapPage() {
         market_cap_min: mcapMin,
         market_cap_max: mcapMax,
         momentum_period: momentumPeriod || undefined,
+        weighting,
         ...(hasFocus && focusMetric
           ? {
               valuation_metric: focusMetric,
@@ -197,13 +263,14 @@ export default function HeatmapPage() {
   };
 
   const hasPortfolio = portfolioHeatmapData && portfolioHeatmapData.countries?.length > 0;
+  const hasFocusActive = focusMetric !== "" && FOCUS_PRESETS[focusPreset].value !== "none";
 
   return (
     <div>
       <div className="mb-6">
         <h1 className="font-serif text-3xl font-bold text-ba-navy">Heatmap</h1>
         <p className="text-gray-500 mt-1">
-          Country × Sector matrix with momentum-based conditional formatting.
+          Country x Sector matrix with momentum-based conditional formatting.
           {portfolioName && (
             <span className="ml-2 px-2 py-0.5 bg-ba-navy text-white text-xs rounded">
               Portfolio: {portfolioName} ({portfolioHoldings.length} holdings)
@@ -214,7 +281,7 @@ export default function HeatmapPage() {
 
       {/* Controls */}
       <div className="ba-card mb-6">
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
+        <div className="grid grid-cols-1 md:grid-cols-6 gap-4 items-end">
           <div>
             <label className="block text-sm font-medium text-ba-navy mb-1">Region</label>
             <select
@@ -232,7 +299,7 @@ export default function HeatmapPage() {
             <label className="block text-sm font-medium text-ba-navy mb-1">Metric</label>
             <select
               value={metric}
-              onChange={(e) => setMetric(e.target.value)}
+              onChange={(e) => handleMetricChange(e.target.value)}
               className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:border-ba-accent outline-none"
             >
               {METRICS.map((m) => (
@@ -242,7 +309,7 @@ export default function HeatmapPage() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-ba-navy mb-1">Momentum Period</label>
+            <label className="block text-sm font-medium text-ba-navy mb-1">Momentum</label>
             <select
               value={momentumPeriod}
               onChange={(e) => setMomentumPeriod(e.target.value)}
@@ -267,14 +334,27 @@ export default function HeatmapPage() {
             </select>
           </div>
 
+          {/* 2a: Weighting toggle */}
+          <div>
+            <label className="block text-sm font-medium text-ba-navy mb-1">Weighting</label>
+            <select
+              value={weighting}
+              onChange={(e) => setWeighting(e.target.value as "equal" | "market_cap")}
+              className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:border-ba-accent outline-none"
+            >
+              <option value="equal">Equal Weight</option>
+              <option value="market_cap">Market Cap Weight</option>
+            </select>
+          </div>
+
           <button onClick={handleGenerate} disabled={loading} className="ba-btn-primary disabled:opacity-50">
-            {loading ? "Generating..." : "Generate Heatmap"}
+            {loading ? "Generating..." : "Generate"}
           </button>
         </div>
 
         {/* Market Cap Range */}
         <div className="mt-4 pt-3 border-t border-gray-100">
-          <label className="block text-sm font-medium text-ba-navy mb-2">Market Cap Range</label>
+          <label className="block text-sm font-medium text-ba-navy mb-2">Market Cap ($B)</label>
           <div className="max-w-md">
             <MarketCapSlider
               minValue={mcapMin || 100e6}
@@ -284,13 +364,13 @@ export default function HeatmapPage() {
           </div>
         </div>
 
-        {/* Focus filter */}
+        {/* Focus filter + inversion */}
         <div className="mt-4 pt-3 border-t border-gray-100">
           <div className="flex items-center gap-3 flex-wrap">
             <label className="text-sm font-medium text-ba-navy">Focus:</label>
             <select
               value={focusMetric}
-              onChange={(e) => setFocusMetric(e.target.value)}
+              onChange={(e) => handleFocusChange(e.target.value)}
               className="border border-gray-300 rounded px-2 py-1.5 text-sm focus:border-ba-accent outline-none"
             >
               <option value="">None</option>
@@ -316,25 +396,50 @@ export default function HeatmapPage() {
                 ))}
               </div>
             )}
+
+            {/* 2h: Inversion toggle */}
+            {portfolioTickers.size > 0 && (
+              <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer ml-4">
+                <input
+                  type="checkbox"
+                  checked={showUnowned}
+                  onChange={(e) => setShowUnowned(e.target.checked)}
+                  className="rounded border-gray-300"
+                />
+                Show unowned only
+              </label>
+            )}
           </div>
         </div>
 
         {/* Color legend */}
         <div className="mt-4 flex items-center gap-2 text-xs text-gray-500">
           <span>Color scale:</span>
-          <span className="bg-green-600 text-white px-2 py-0.5 rounded">
-            {colorMode === "momentum" ? "Top 20%" : "Cheapest"}
-          </span>
-          <span className="bg-green-200 text-green-900 px-2 py-0.5 rounded">
-            {colorMode === "momentum" ? "60-80%" : "Cheap"}
-          </span>
-          <span className="bg-gray-100 text-gray-700 px-2 py-0.5 rounded">Neutral</span>
-          <span className="bg-orange-200 text-orange-900 px-2 py-0.5 rounded">
-            {colorMode === "momentum" ? "20-40%" : "Expensive"}
-          </span>
-          <span className="bg-red-500 text-white px-2 py-0.5 rounded">
-            {colorMode === "momentum" ? "Bottom 20%" : "Most Expensive"}
-          </span>
+          {hasFocusActive ? (
+            <>
+              <span className="bg-blue-800 text-white px-2 py-0.5 rounded">Cheapest</span>
+              <span className="bg-blue-600 text-white px-2 py-0.5 rounded">Cheap</span>
+              <span className="bg-blue-400 text-white px-2 py-0.5 rounded">Mid</span>
+              <span className="bg-blue-200 text-blue-900 px-2 py-0.5 rounded">Higher</span>
+              <span className="bg-blue-100 text-blue-800 px-2 py-0.5 rounded">Highest</span>
+            </>
+          ) : (
+            <>
+              <span className="bg-green-600 text-white px-2 py-0.5 rounded">
+                {colorMode === "momentum" ? "Top 20%" : "Cheapest"}
+              </span>
+              <span className="bg-green-200 text-green-900 px-2 py-0.5 rounded">
+                {colorMode === "momentum" ? "60-80%" : "Cheap"}
+              </span>
+              <span className="bg-gray-100 text-gray-700 px-2 py-0.5 rounded">Neutral</span>
+              <span className="bg-orange-200 text-orange-900 px-2 py-0.5 rounded">
+                {colorMode === "momentum" ? "20-40%" : "Expensive"}
+              </span>
+              <span className="bg-red-500 text-white px-2 py-0.5 rounded">
+                {colorMode === "momentum" ? "Bottom 20%" : "Most Expensive"}
+              </span>
+            </>
+          )}
         </div>
       </div>
 
@@ -344,15 +449,17 @@ export default function HeatmapPage() {
 
       {loading && <LoadingSpinner message="Generating heatmap..." />}
 
-      {/* Heatmaps — stacked vertically */}
+      {/* 2e: Side-by-side heatmaps */}
       {!loading && heatmapData && heatmapData.countries.length > 0 && (
-        <div className="space-y-6 mb-6">
-          {/* Market heatmap */}
-          <div className="ba-card">
+        <div className={`mb-6 ${hasPortfolio ? "grid grid-cols-1 xl:grid-cols-2 gap-6" : ""}`}>
+          {/* Market heatmap (or unowned view) */}
+          <div className="ba-card overflow-hidden">
             <div className="flex items-center justify-between mb-3">
               <p className="text-sm text-gray-500">
-                {heatmapData.total_companies} companies across {heatmapData.countries.length} countries and {heatmapData.sectors.length} sectors
-                {focusMetric && FOCUS_PRESETS[focusPreset].value !== "none" && (
+                {(showUnowned && unownedHeatmapData ? unownedHeatmapData.total_companies : heatmapData.total_companies)} companies
+                {weighting === "market_cap" && <span className="ml-1 text-ba-accent">(cap-weighted)</span>}
+                {showUnowned && <span className="ml-1 text-ba-accent">(unowned)</span>}
+                {hasFocusActive && (
                   <span className="ml-2 px-2 py-0.5 bg-ba-navy text-white text-xs rounded">
                     Focus: {FOCUS_METRICS.find((m) => m.id === focusMetric)?.name} — {FOCUS_PRESETS[focusPreset].label}
                   </span>
@@ -360,24 +467,25 @@ export default function HeatmapPage() {
               </p>
             </div>
             <HeatmapGrid
-              title={hasPortfolio ? "Market" : undefined}
-              countries={heatmapData.countries}
-              sectors={heatmapData.sectors}
-              matrix={heatmapData.matrix}
-              counts={heatmapData.counts}
-              companies={heatmapData.companies}
+              title={hasPortfolio ? (showUnowned ? "Market (Unowned)" : "Market") : undefined}
+              countries={(showUnowned && unownedHeatmapData ? unownedHeatmapData : heatmapData).countries}
+              sectors={(showUnowned && unownedHeatmapData ? unownedHeatmapData : heatmapData).sectors}
+              matrix={(showUnowned && unownedHeatmapData ? unownedHeatmapData : heatmapData).matrix}
+              counts={(showUnowned && unownedHeatmapData ? unownedHeatmapData : heatmapData).counts}
+              companies={(showUnowned && unownedHeatmapData ? unownedHeatmapData : heatmapData).companies}
               metric={metric}
-              momentumMatrix={heatmapData.momentum_matrix}
+              momentumMatrix={(showUnowned && unownedHeatmapData ? null : heatmapData.momentum_matrix)}
               colorMode={colorMode}
+              focusActive={hasFocusActive}
             />
           </div>
 
           {/* Portfolio heatmap */}
           {hasPortfolio && (
-            <div className="ba-card">
+            <div className="ba-card overflow-hidden">
               <div className="flex items-center justify-between mb-3">
                 <p className="text-sm text-gray-500">
-                  {portfolioHeatmapData.total_companies} holdings across {portfolioHeatmapData.countries.length} countries and {portfolioHeatmapData.sectors.length} sectors
+                  {portfolioHeatmapData.total_companies} holdings
                 </p>
               </div>
               <HeatmapGrid
@@ -391,6 +499,7 @@ export default function HeatmapPage() {
                 momentumMatrix={portfolioHeatmapData.momentum_matrix}
                 colorMode={colorMode}
                 universeCompanies={heatmapData?.companies}
+                focusActive={hasFocusActive}
               />
             </div>
           )}

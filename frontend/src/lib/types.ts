@@ -37,6 +37,11 @@ export interface ScreeningRequest {
   valuation_metric?: string;
   valuation_percentile_min?: number;
   valuation_percentile_max?: number;
+  sectors?: string[];
+  countries?: string[];
+  momentum_period?: string;
+  momentum_percentile_min?: number;
+  momentum_percentile_max?: number;
 }
 
 export interface ScreeningResponse {

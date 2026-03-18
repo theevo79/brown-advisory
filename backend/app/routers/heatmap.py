@@ -56,7 +56,10 @@ async def get_market_heatmap(request: HeatmapRequest):
                 }
                 momentum_service.close()
 
-        result = heatmap_service.build_heatmap_from_results(screening_response, momentum_data)
+        result = heatmap_service.build_heatmap_from_results(
+            screening_response, momentum_data,
+            weighting=request.weighting, region=request.region
+        )
         heatmap_service.close()
         return result
     except ValueError as e:

@@ -237,6 +237,31 @@ class BaseRateService:
             if row and row[0] and row[1] and row[1] != 0:
                 return (row[0] / row[1]) * 100
 
+        elif metric == 'ebitda_margin':
+            cursor.execute('''
+                SELECT ebitda, total_revenue
+                FROM income_statements
+                WHERE company_id = ? AND fiscal_year = ?
+            ''', (company_id, year))
+            row = cursor.fetchone()
+            if row and row[0] and row[1] and row[1] != 0:
+                return (row[0] / row[1]) * 100
+
+        elif metric == 'net_debt_ebitda':
+            cursor.execute('''
+                SELECT i.ebitda, b.short_term_debt, b.long_term_debt, b.cash
+                FROM income_statements i
+                JOIN balance_sheets b ON i.company_id = b.company_id AND i.fiscal_year = b.fiscal_year
+                WHERE i.company_id = ? AND i.fiscal_year = ?
+            ''', (company_id, year))
+            row = cursor.fetchone()
+            if row and row[0] and row[0] > 0:
+                ebitda = row[0]
+                net_debt = (row[1] or 0) + (row[2] or 0) - (row[3] or 0)
+                ratio = net_debt / ebitda
+                if -20 <= ratio <= 50:
+                    return round(ratio, 2)
+
         elif metric == 'current_ratio':
             cursor.execute('''
                 SELECT total_current_assets, total_current_liabilities
@@ -327,6 +352,8 @@ class BaseRateService:
             'roic': 'Return on Invested Capital (%)',
             'net_margin': 'Net Profit Margin (%)',
             'ebit_margin': 'EBIT Margin (%)',
+            'ebitda_margin': 'EBITDA Margin (%)',
+            'net_debt_ebitda': 'Net Debt/EBITDA',
             'current_ratio': 'Current Ratio',
             'debt_to_equity': 'Debt/Equity Ratio'
         }

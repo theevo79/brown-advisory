@@ -15,8 +15,8 @@ const METRIC_LABELS: Record<string, string> = {
   ev_ebitda: "EV/EBITDA", ev_sales: "EV/Sales", ev_ebit: "EV/EBIT", ev_fcf: "EV/FCF",
   cape: "CAPE", cape_real: "CAPE (R)", ev_nopat_avg: "EV/NOPAT", ev_ebit_avg: "EV/EBIT Avg",
   ev_nopat_avg_real: "EV/NOPAT (R)", ev_ebit_avg_real: "EV/EBIT (R)",
-  roe: "ROE %", roa: "ROA %", ebit_margin: "EBIT %", net_margin: "Net %",
-  current_ratio: "CR", debt_to_equity: "D/E",
+  roe: "ROE %", roa: "ROA %", ebit_margin: "EBIT %", ebitda_margin: "EBITDA %", net_margin: "Net %",
+  current_ratio: "CR", debt_to_equity: "D/E", net_debt_ebitda: "ND/EBITDA",
 };
 
 const COLOUR_PERIODS = [

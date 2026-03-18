@@ -25,6 +25,7 @@ class HeatmapRequest(BaseModel):
     valuation_metric: Optional[str] = None
     valuation_percentile_min: Optional[float] = None
     valuation_percentile_max: Optional[float] = None
+    weighting: str = "equal"  # "equal" or "market_cap"
 
 
 class HeatmapCell(BaseModel):

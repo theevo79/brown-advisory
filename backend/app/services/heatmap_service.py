@@ -17,7 +17,8 @@ class HeatmapService:
     def __init__(self):
         self.screening_service = ScreeningService()
 
-    def build_heatmap_from_results(self, screening_response, momentum_data: dict = None) -> dict:
+    def build_heatmap_from_results(self, screening_response, momentum_data: dict = None,
+                                     weighting: str = "equal", region: str = None) -> dict:
         """Build heatmap from pre-computed screening results (avoids double-screening)."""
         if not screening_response.results:
             return {
@@ -27,7 +28,7 @@ class HeatmapService:
             }
         # First metric in the results is the focus metric
         metric = list(screening_response.results[0].metrics.keys())[0] if screening_response.results else ''
-        return self._build_from_screening(screening_response, metric, momentum_data)
+        return self._build_from_screening(screening_response, metric, momentum_data, weighting, region)
 
     def get_market_heatmap(self, request: ScreeningRequest, momentum_data: dict = None) -> dict:
         """Generate country x sector heatmap with average metric values."""
@@ -38,7 +39,8 @@ class HeatmapService:
         screening_response = self.screening_service.screen_companies(request)
         return self._build_from_screening(screening_response, metric, momentum_data)
 
-    def _build_from_screening(self, screening_response, metric: str, momentum_data: dict = None) -> dict:
+    def _build_from_screening(self, screening_response, metric: str, momentum_data: dict = None,
+                                weighting: str = "equal", region: str = None) -> dict:
         """Shared logic for building heatmap from screening results."""
         companies_with_metrics = []
         for company in screening_response.results:
@@ -67,7 +69,7 @@ class HeatmapService:
                         entry[m_id] = None
                 companies_with_metrics.append(entry)
 
-        return self._build_heatmap_matrix(companies_with_metrics, metric, momentum_data)
+        return self._build_heatmap_matrix(companies_with_metrics, metric, momentum_data, weighting, region)
 
     def get_portfolio_heatmap(self, holdings: list, metric: str,
                                through_cycle_years: int = 10, min_years: int = 5) -> dict:
@@ -157,18 +159,29 @@ class HeatmapService:
         result['stock_details'] = stock_details
         return result
 
-    def _build_heatmap_matrix(self, companies: list, metric: str, momentum_data: dict = None) -> dict:
+    def _build_heatmap_matrix(self, companies: list, metric: str, momentum_data: dict = None,
+                               weighting: str = "equal", region: str = None) -> dict:
         valid_companies = [c for c in companies if c['country'] and c['sector']]
 
         if not valid_companies:
             return {
                 'countries': [], 'sectors': [], 'matrix': [], 'counts': [],
                 'companies': {}, 'metric': metric, 'total_companies': 0,
-                'momentum_matrix': None
+                'momentum_matrix': None, 'weighting': weighting
             }
 
-        countries = sorted(set(c['country'] for c in valid_companies))
-        sectors = sorted(set(c['sector'] for c in valid_companies))
+        data_countries = sorted(set(c['country'] for c in valid_companies))
+        data_sectors = sorted(set(c['sector'] for c in valid_companies))
+
+        # 2d: Full matrix — include all known countries/sectors for the region
+        if region:
+            region_countries = self._get_region_countries(region)
+            region_sectors = self._get_known_sectors()
+            countries = sorted(set(data_countries) | set(region_countries))
+            sectors = sorted(set(data_sectors) | set(region_sectors))
+        else:
+            countries = data_countries
+            sectors = data_sectors
 
         cell_data = defaultdict(list)
         for company in valid_companies:
@@ -189,8 +202,12 @@ class HeatmapService:
                 cell_companies = cell_data.get(key, [])
 
                 if cell_companies:
-                    values = [c['metric_value'] for c in cell_companies if c['metric_value'] is not None]
-                    avg_value = round(sum(values) / len(values), 2) if values else None
+                    # 2a: Equal weight vs market-cap weight
+                    if weighting == "market_cap":
+                        avg_value = self._mcap_weighted_avg(cell_companies, 'metric_value')
+                    else:
+                        values = [c['metric_value'] for c in cell_companies if c['metric_value'] is not None]
+                        avg_value = round(sum(values) / len(values), 2) if values else None
                     country_row.append(avg_value)
                     count_row.append(len(cell_companies))
 
@@ -240,7 +257,41 @@ class HeatmapService:
             'metric': metric,
             'total_companies': len(valid_companies),
             'momentum_matrix': momentum_matrix if momentum_data else None,
+            'weighting': weighting,
         }
+
+    @staticmethod
+    def _mcap_weighted_avg(companies: list, value_key: str) -> float | None:
+        """Market-cap-weighted average of a metric across companies."""
+        total_mcap = 0
+        weighted_sum = 0
+        for c in companies:
+            val = c.get(value_key)
+            mcap = c.get('market_cap')
+            if val is not None and mcap and mcap > 0:
+                weighted_sum += val * mcap
+                total_mcap += mcap
+        if total_mcap <= 0:
+            return None
+        return round(weighted_sum / total_mcap, 2)
+
+    @staticmethod
+    def _get_region_countries(region: str) -> list:
+        """Get all countries for a region from RegionMapper."""
+        from app.routers.metadata import REGIONS
+        for r in REGIONS:
+            if r['id'] == region:
+                return r.get('countries', [])
+        return []
+
+    @staticmethod
+    def _get_known_sectors() -> list:
+        """Return known sector list used across the app."""
+        return [
+            'Basic Materials', 'Communication Services', 'Consumer Cyclical',
+            'Consumer Defensive', 'Energy', 'Financial Services', 'Healthcare',
+            'Industrials', 'Real Estate', 'Technology', 'Utilities',
+        ]
 
     def close(self):
         self.screening_service.close()

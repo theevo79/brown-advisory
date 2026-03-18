@@ -23,6 +23,11 @@ class ScreeningRequest(BaseModel):
     valuation_metric: Optional[str] = None
     valuation_percentile_min: Optional[float] = None
     valuation_percentile_max: Optional[float] = None
+    sectors: Optional[List[str]] = None
+    countries: Optional[List[str]] = None
+    momentum_period: Optional[str] = None
+    momentum_percentile_min: Optional[float] = None
+    momentum_percentile_max: Optional[float] = None
 
 
 class MetricValue(BaseModel):

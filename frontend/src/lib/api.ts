@@ -80,6 +80,26 @@ export const api = {
     return response.data;
   },
 
+  // Saved Peer Groups
+  async listPeerGroups(): Promise<any[]> {
+    const response = await apiClient.get("/base-rate/peer-groups");
+    return response.data;
+  },
+
+  async savePeerGroup(name: string, tickers: string[]): Promise<any> {
+    const response = await apiClient.post("/base-rate/peer-groups", { name, tickers });
+    return response.data;
+  },
+
+  async updatePeerGroup(id: number, name: string, tickers: string[]): Promise<any> {
+    const response = await apiClient.put(`/base-rate/peer-groups/${id}`, { name, tickers });
+    return response.data;
+  },
+
+  async deletePeerGroup(id: number): Promise<void> {
+    await apiClient.delete(`/base-rate/peer-groups/${id}`);
+  },
+
   // Portfolio
   async createPortfolio(name: string, holdings: PortfolioHolding[]): Promise<Portfolio> {
     const response = await apiClient.post<Portfolio>("/portfolio/create", { name, holdings });
@@ -133,6 +153,16 @@ export const api = {
       responseType: "blob",
     });
     return response.data;
+  },
+
+  async getSectors(): Promise<string[]> {
+    const response = await apiClient.get<{ sectors: string[] }>("/metadata/sectors");
+    return response.data.sectors;
+  },
+
+  async getCountries(): Promise<string[]> {
+    const response = await apiClient.get<{ countries: string[] }>("/metadata/countries");
+    return response.data.countries;
   },
 
   async searchCompanies(query: string, limit: number = 50): Promise<any> {

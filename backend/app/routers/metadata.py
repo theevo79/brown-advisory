@@ -38,11 +38,13 @@ METRICS = {
         {"id": "roe", "name": "ROE", "description": "Return on Equity (%)", "category": "profitability"},
         {"id": "roa", "name": "ROA", "description": "Return on Assets (%)", "category": "profitability"},
         {"id": "ebit_margin", "name": "EBIT Margin", "description": "EBIT / Revenue (%)", "category": "profitability"},
+        {"id": "ebitda_margin", "name": "EBITDA Margin", "description": "EBITDA / Revenue (%)", "category": "profitability"},
         {"id": "net_margin", "name": "Net Margin", "description": "Net Income / Revenue (%)", "category": "profitability"},
     ],
     "financial_health": [
         {"id": "current_ratio", "name": "Current Ratio", "description": "Current Assets / Current Liabilities", "category": "financial_health"},
         {"id": "debt_to_equity", "name": "Debt/Equity", "description": "Total Liabilities / Equity", "category": "financial_health"},
+        {"id": "net_debt_ebitda", "name": "Net Debt/EBITDA", "description": "Net Debt / EBITDA leverage ratio", "category": "financial_health"},
     ],
 }
 
@@ -55,6 +57,38 @@ async def get_regions():
 @router.get("/metrics")
 async def get_metrics():
     return {"metrics": METRICS}
+
+
+@router.get("/sectors")
+async def get_sectors():
+    """Get all distinct sectors from active companies."""
+    db = get_db()
+    rows = db.db.fetchall("""
+        SELECT DISTINCT sector FROM companies
+        WHERE is_active = 1 AND sector IS NOT NULL AND sector != ''
+        ORDER BY sector
+    """)
+    return {"sectors": [row['sector'] for row in rows]}
+
+
+@router.get("/countries")
+async def get_countries():
+    """Get all distinct countries from active companies."""
+    db = get_db()
+    rows = db.db.fetchall("""
+        SELECT DISTINCT country FROM companies
+        WHERE is_active = 1 AND country IS NOT NULL AND country != ''
+        ORDER BY country
+    """)
+    # Normalize country names
+    from app.services.region_mapper import RegionMapper
+    countries = set()
+    for row in rows:
+        country = row['country']
+        if len(country) == 2:
+            country = RegionMapper.normalize_country(country)
+        countries.add(country)
+    return {"countries": sorted(countries)}
 
 
 @router.get("/search/companies")

@@ -1,7 +1,11 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useMemo } from "react";
 import { formatNumber } from "@/lib/formatters";
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip,
+  ResponsiveContainer, Cell as RechartsCell
+} from "recharts";
 
 interface CellMetrics {
   pe: number | null;
@@ -24,6 +28,7 @@ interface HeatmapGridProps {
   colorMode: "metric" | "momentum";
   title?: string;
   universeCompanies?: Record<string, any[]>;
+  focusActive?: boolean;
 }
 
 function getMetricColor(value: number | null, allValues: number[]): string {
@@ -39,6 +44,20 @@ function getMetricColor(value: number | null, allValues: number[]): string {
   return "bg-red-500 text-white";
 }
 
+/** 2c: Single-color intensity for focus mode — shades of blue (all cheap) */
+function getFocusIntensityColor(value: number | null, allValues: number[]): string {
+  if (value === null) return "bg-gray-50 text-gray-400";
+  const sorted = [...allValues].sort((a, b) => a - b);
+  const idx = sorted.findIndex((v) => v >= value);
+  const pct = sorted.length > 1 ? idx / (sorted.length - 1) : 0.5;
+  // Lower = cheaper = darker blue
+  if (pct <= 0.2) return "bg-blue-800 text-white";
+  if (pct <= 0.4) return "bg-blue-600 text-white";
+  if (pct <= 0.6) return "bg-blue-400 text-white";
+  if (pct <= 0.8) return "bg-blue-200 text-blue-900";
+  return "bg-blue-100 text-blue-800";
+}
+
 function getMomentumColor(percentile: number | null): string {
   if (percentile === null) return "bg-gray-50 text-gray-400";
   if (percentile >= 80) return "bg-green-600 text-white";
@@ -48,8 +67,16 @@ function getMomentumColor(percentile: number | null): string {
   return "bg-red-500 text-white";
 }
 
+const METRIC_NAMES: Record<string, string> = {
+  pe_ratio: "P/E", pb_ratio: "P/B", cape: "CAPE",
+  ev_ebitda: "EV/EBITDA", roe: "ROE", net_margin: "Net Margin",
+  ev_ebit_avg: "EV/EBIT Avg", ev_nopat_avg: "EV/NOPAT Avg",
+  ev_sales: "EV/Sales", ebitda_margin: "EBITDA Margin",
+  net_debt_ebitda: "ND/EBITDA",
+};
+
 export default function HeatmapGrid({
-  countries, sectors, matrix, counts, companies, metric, momentumMatrix, colorMode, title, universeCompanies,
+  countries, sectors, matrix, counts, companies, metric, momentumMatrix, colorMode, title, universeCompanies, focusActive,
 }: HeatmapGridProps) {
   const [drillDown, setDrillDown] = useState<{ country: string; sector: string } | null>(null);
   const [tooltip, setTooltip] = useState<{ x: number; y: number; country: string; sector: string; value: number | null; count: number; metrics: CellMetrics } | null>(null);
@@ -97,14 +124,12 @@ export default function HeatmapGrid({
   }
 
   // Pre-compute per-company percentiles across the full heatmap universe
-  // If universeCompanies is provided (e.g. market data for portfolio grid), rank against that instead
   const pctSource = universeCompanies || companies;
   const allCompanies: any[] = [];
   for (const comps of Object.values(pctSource)) {
     if (comps?.length) allCompanies.push(...comps);
   }
 
-  // Valuation metrics must be > 0 to be meaningful; profitability metrics can be negative
   const VALUATION_METRICS = new Set(["pe_ratio", "pb_ratio", "cape", "ev_ebitda", "ps_ratio", "ev_sales", "ev_ebit", "ev_fcf"]);
 
   const universeArrays: Record<string, number[]> = {};
@@ -125,7 +150,6 @@ export default function HeatmapGrid({
     return Math.round(((idx - 1) / Math.max(arr.length - 1, 1)) * 100);
   };
 
-  // Valuation: low = green; Profitability: high = green
   const HIGHER_IS_BETTER = new Set(["roe", "net_margin"]);
 
   const pctBadgeClass = (pct: number | null, metricKey: string): string => {
@@ -140,6 +164,19 @@ export default function HeatmapGrid({
   const drillDownCompanies = drillDown
     ? companies[`${drillDown.country}_${drillDown.sector}`] || []
     : [];
+
+  // 2f: Bar chart data for drill-down
+  const drillDownBarData = useMemo(() => {
+    if (!drillDown || drillDownCompanies.length === 0) return [];
+    return drillDownCompanies
+      .filter((c: any) => c.metric_value != null)
+      .sort((a: any, b: any) => (a.metric_value || 0) - (b.metric_value || 0))
+      .map((c: any) => ({
+        ticker: c.ticker,
+        value: c.metric_value,
+        name: c.company_name,
+      }));
+  }, [drillDown, drillDownCompanies]);
 
   return (
     <div>
@@ -174,7 +211,9 @@ export default function HeatmapGrid({
                   const colorClass =
                     colorMode === "momentum" && momentumMatrix
                       ? getMomentumColor(momPct ?? null)
-                      : getMetricColor(value, allValues);
+                      : focusActive
+                        ? getFocusIntensityColor(value, allValues)
+                        : getMetricColor(value, allValues);
 
                   return (
                     <td
@@ -199,8 +238,10 @@ export default function HeatmapGrid({
                           <div className="font-medium leading-tight">{formatNumber(value, 1)}</div>
                           <div className="opacity-60 leading-tight">{count}</div>
                         </div>
+                      ) : count > 0 ? (
+                        <div className="opacity-40">{count}</div>
                       ) : (
-                        <span className="text-gray-300">—</span>
+                        <span className="text-gray-200">-</span>
                       )}
                     </td>
                   );
@@ -276,7 +317,7 @@ export default function HeatmapGrid({
 
         return (
           <div className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center p-4" onClick={() => setDrillDown(null)}>
-            <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[80vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="bg-white rounded-lg shadow-xl max-w-5xl w-full max-h-[85vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
               <div className="p-4 border-b border-gray-200 flex items-center justify-between">
                 <h3 className="font-serif text-lg font-semibold text-ba-navy">
                   {drillDown.country} — {drillDown.sector}
@@ -321,6 +362,35 @@ export default function HeatmapGrid({
                   )}
                 </div>
               </div>
+
+              {/* 2f: Bar chart for drill-down */}
+              {drillDownBarData.length > 0 && (
+                <div className="px-4 pt-2 pb-4">
+                  <p className="text-xs text-gray-400 mb-2">{METRIC_NAMES[metric] || metric} by company</p>
+                  <div style={{ height: Math.max(200, drillDownBarData.length * 28) }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={drillDownBarData} layout="vertical" margin={{ left: 60, right: 20, top: 5, bottom: 5 }}>
+                        <XAxis type="number" tick={{ fontSize: 10 }} />
+                        <YAxis type="category" dataKey="ticker" tick={{ fontSize: 10 }} width={55} />
+                        <RechartsTooltip
+                          formatter={(value: number) => [formatNumber(value, 1), METRIC_NAMES[metric] || metric]}
+                          labelFormatter={(label: string) => {
+                            const item = drillDownBarData.find((d) => d.ticker === label);
+                            return item?.name || label;
+                          }}
+                        />
+                        <Bar dataKey="value" radius={[0, 3, 3, 0]}>
+                          {drillDownBarData.map((_, i) => {
+                            const pct = drillDownBarData.length > 1 ? i / (drillDownBarData.length - 1) : 0.5;
+                            const color = pct <= 0.33 ? "#16a34a" : pct <= 0.66 ? "#6b7280" : "#dc2626";
+                            return <RechartsCell key={i} fill={color} />;
+                          })}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              )}
 
               <div className="p-4 pt-2">
                 {drillDownCompanies.length > 0 ? (

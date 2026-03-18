@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useMemo } from "react";
+import { useState, useRef, useMemo, useEffect } from "react";
 import * as XLSX from "xlsx";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import TickerSearch from "@/components/TickerSearch";
@@ -30,6 +30,8 @@ const METRICS = [
   { value: "roic", label: "Return on Invested Capital (%)" },
   { value: "net_margin", label: "Net Profit Margin (%)" },
   { value: "ebit_margin", label: "EBIT Margin (%)" },
+  { value: "ebitda_margin", label: "EBITDA Margin (%)" },
+  { value: "net_debt_ebitda", label: "Net Debt/EBITDA" },
   { value: "current_ratio", label: "Current Ratio" },
   { value: "debt_to_equity", label: "Debt/Equity Ratio" },
 ];
@@ -50,6 +52,45 @@ export default function BaseRatePage() {
   const [refAreaRight, setRefAreaRight] = useState<number | null>(null);
   const [customDomain, setCustomDomain] = useState<[number, number] | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // 3c: % vs count toggle
+  const [histMode, setHistMode] = useState<"count" | "percent">("count");
+
+  // 3d: Company distribution overlay toggle
+  const [showCompanyOverlay, setShowCompanyOverlay] = useState(true);
+
+  // 3e: Saved peer groups
+  const [savedGroups, setSavedGroups] = useState<any[]>([]);
+  const [saveGroupName, setSaveGroupName] = useState("");
+
+  useEffect(() => {
+    api.listPeerGroups().then(setSavedGroups).catch(() => {});
+  }, []);
+
+  const handleSavePeerGroup = async () => {
+    if (!saveGroupName.trim() || peerList.length === 0) return;
+    try {
+      await api.savePeerGroup(saveGroupName.trim(), peerList);
+      setSaveGroupName("");
+      const groups = await api.listPeerGroups();
+      setSavedGroups(groups);
+    } catch (err: any) {
+      setError(err.message || "Failed to save peer group");
+    }
+  };
+
+  const handleLoadPeerGroup = (group: any) => {
+    setPeerList(group.tickers);
+    setPeerSelection("custom");
+  };
+
+  const handleDeletePeerGroup = async (id: number) => {
+    try {
+      await api.deletePeerGroup(id);
+      const groups = await api.listPeerGroups();
+      setSavedGroups(groups);
+    } catch {}
+  };
 
   const addPeer = (t: string) => {
     const upper = t.trim().toUpperCase();
@@ -231,34 +272,55 @@ export default function BaseRatePage() {
     const dist = result.peer_distribution;
     const raw = dist.raw_values;
 
+    let bins: { bin: number; count: number; binStart: number; binEnd: number }[];
+
     if (zoomPreset === "full") {
-      // Use the server-provided histogram (already IQR-based winsorization)
       if (!dist.histogram_counts?.length) return [];
-      return dist.histogram_counts.map((count: number, i: number) => ({
+      bins = dist.histogram_counts.map((count: number, i: number) => ({
         bin: +((dist.histogram_bins[i] + dist.histogram_bins[i + 1]) / 2).toFixed(2),
         count,
         binStart: dist.histogram_bins[i],
         binEnd: dist.histogram_bins[i + 1],
       }));
-    }
-
-    // For zoom presets, re-bin from raw values
-    if (!raw?.length) return [];
-
-    let rangeMin: number, rangeMax: number;
-    if (zoomPreset === "custom" && customDomain) {
-      [rangeMin, rangeMax] = customDomain;
-    } else if (zoomPreset === "iqr") {
-      rangeMin = dist.q1;
-      rangeMax = dist.q3;
     } else {
-      // "core" = ±1.5 IQR
-      const iqr = dist.q3 - dist.q1;
-      rangeMin = dist.q1 - 1.5 * iqr;
-      rangeMax = dist.q3 + 1.5 * iqr;
+      if (!raw?.length) return [];
+      let rangeMin: number, rangeMax: number;
+      if (zoomPreset === "custom" && customDomain) {
+        [rangeMin, rangeMax] = customDomain;
+      } else if (zoomPreset === "iqr") {
+        rangeMin = dist.q1;
+        rangeMax = dist.q3;
+      } else {
+        const iqr = dist.q3 - dist.q1;
+        rangeMin = dist.q1 - 1.5 * iqr;
+        rangeMax = dist.q3 + 1.5 * iqr;
+      }
+      bins = buildHistogram(raw, rangeMin, rangeMax);
     }
-    return buildHistogram(raw, rangeMin, rangeMax);
-  }, [result, zoomPreset, customDomain]);
+
+    // 3c: Convert to percentage if needed
+    const totalCount = bins.reduce((s, b) => s + b.count, 0);
+
+    // 3d: Build company overlay histogram from historical values
+    const companyValues = result.historical_data
+      ?.filter((h: any) => h.company_value != null)
+      .map((h: any) => h.company_value as number) || [];
+
+    return bins.map((b) => {
+      const pct = totalCount > 0 ? +((b.count / totalCount) * 100).toFixed(1) : 0;
+      // Count how many company historical values fall in this bin
+      let companyCount = 0;
+      if (showCompanyOverlay && companyValues.length > 0) {
+        companyCount = companyValues.filter((v) => v >= b.binStart && v < b.binEnd).length;
+        // Include the rightmost bin boundary for the last bin
+        if (b === bins[bins.length - 1]) {
+          companyCount = companyValues.filter((v) => v >= b.binStart && v <= b.binEnd).length;
+        }
+      }
+      const companyPct = companyValues.length > 0 ? +((companyCount / companyValues.length) * 100).toFixed(1) : 0;
+      return { ...b, percent: pct, companyCount, companyPercent: companyPct };
+    });
+  }, [result, zoomPreset, customDomain, showCompanyOverlay]);
 
   const handleChartMouseDown = (e: any) => {
     if (e?.activeLabel != null) setRefAreaLeft(e.activeLabel);
@@ -412,6 +474,54 @@ export default function BaseRatePage() {
                 Search to add peers individually, or upload a CSV/Excel file with SYMBOL.EXCHANGE tickers.
               </p>
             )}
+
+            {/* 3e: Save/Load peer groups */}
+            <div className="mt-3 pt-3 border-t border-gray-100">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-xs font-medium text-ba-navy">Saved Groups:</span>
+                {savedGroups.length > 0 ? (
+                  savedGroups.map((g) => (
+                    <div key={g.id} className="inline-flex items-center gap-1 bg-gray-50 border border-gray-200 rounded px-2 py-1">
+                      <button
+                        type="button"
+                        onClick={() => handleLoadPeerGroup(g)}
+                        className="text-xs text-ba-navy hover:text-ba-accent"
+                      >
+                        {g.name} ({g.tickers.length})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeletePeerGroup(g.id)}
+                        className="text-gray-400 hover:text-red-500 text-xs ml-0.5"
+                      >
+                        &times;
+                      </button>
+                    </div>
+                  ))
+                ) : (
+                  <span className="text-xs text-gray-400">None saved yet</span>
+                )}
+              </div>
+              {peerList.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={saveGroupName}
+                    onChange={(e) => setSaveGroupName(e.target.value)}
+                    placeholder="Group name..."
+                    className="border border-gray-300 rounded px-2 py-1 text-xs focus:border-ba-accent outline-none w-40"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleSavePeerGroup}
+                    disabled={!saveGroupName.trim()}
+                    className="px-2.5 py-1 text-xs bg-ba-navy text-white rounded disabled:opacity-40 hover:bg-ba-accent"
+                  >
+                    Save Current
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         )}
 
@@ -499,11 +609,37 @@ export default function BaseRatePage() {
 
           {/* Distribution Chart */}
           <div className="ba-card">
-            <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
               <h3 className="font-serif text-lg font-semibold text-ba-navy">
                 Peer Distribution ({result.years_analyzed} years, {result.peer_distribution.total_data_points} data points)
               </h3>
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-3 flex-wrap">
+                {/* 3c: % vs Count toggle */}
+                <div className="flex items-center gap-1">
+                  <span className="text-xs text-gray-400">Y-axis:</span>
+                  {(["count", "percent"] as const).map((m) => (
+                    <button
+                      key={m}
+                      onClick={() => setHistMode(m)}
+                      className={`px-2 py-1 text-xs rounded ${
+                        histMode === m ? "bg-ba-navy text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                      }`}
+                    >
+                      {m === "count" ? "Count" : "%"}
+                    </button>
+                  ))}
+                </div>
+                {/* 3d: Company overlay toggle */}
+                <label className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={showCompanyOverlay}
+                    onChange={(e) => setShowCompanyOverlay(e.target.checked)}
+                    className="rounded border-gray-300 text-ba-accent"
+                  />
+                  Company overlay
+                </label>
+                <div className="flex items-center gap-1.5">
                 <span className="text-xs text-gray-400 mr-1">Zoom:</span>
                 {([
                   { key: "full", label: "Full" },
@@ -530,6 +666,7 @@ export default function BaseRatePage() {
                     Reset
                   </button>
                 )}
+              </div>
               </div>
             </div>
             {zoomPreset !== "full" && (
@@ -571,7 +708,7 @@ export default function BaseRatePage() {
                     <YAxis
                       stroke="#6B7280"
                       tick={{ fontSize: 11 }}
-                      label={{ value: "Count", angle: -90, position: "insideLeft", fontSize: 12 }}
+                      label={{ value: histMode === "percent" ? "%" : "Count", angle: -90, position: "insideLeft", fontSize: 12 }}
                     />
                     <Tooltip
                       content={({ active, payload }) => {
@@ -582,14 +719,24 @@ export default function BaseRatePage() {
                               <p className="font-semibold text-ba-navy">
                                 {formatNumber(data.binStart, 1)} to {formatNumber(data.binEnd, 1)}
                               </p>
-                              <p className="text-gray-500">Count: {data.count}</p>
+                              <p className="text-gray-500">
+                                Peers: {data.count}{histMode === "percent" ? ` (${data.percent}%)` : ""}
+                              </p>
+                              {showCompanyOverlay && data.companyCount > 0 && (
+                                <p className="text-ba-navy">
+                                  Company: {data.companyCount}{histMode === "percent" ? ` (${data.companyPercent}%)` : ""}
+                                </p>
+                              )}
                             </div>
                           );
                         }
                         return null;
                       }}
                     />
-                    <Bar dataKey="count" fill="#005ba5" />
+                    <Bar dataKey={histMode === "percent" ? "percent" : "count"} fill="#005ba5" name="Peer Distribution" />
+                    {showCompanyOverlay && (
+                      <Bar dataKey={histMode === "percent" ? "companyPercent" : "companyCount"} fill="#163963" fillOpacity={0.5} name="Company History" />
+                    )}
                     {isValidNumber(result.current_value) && (
                       <ReferenceLine
                         x={result.current_value}
@@ -688,7 +835,25 @@ export default function BaseRatePage() {
             </h3>
             <ResponsiveContainer width="100%" height={400}>
               <LineChart
-                data={result.historical_data}
+                data={(() => {
+                  // 3f: Cap extreme values for better visualization
+                  const allVals = result.historical_data.flatMap((h: any) =>
+                    [h.company_value, h.peer_avg, h.peer_median].filter((v) => v != null)
+                  );
+                  if (allVals.length === 0) return result.historical_data;
+                  const sorted = [...allVals].sort((a, b) => a - b);
+                  const q1 = sorted[Math.floor(sorted.length * 0.25)];
+                  const q3 = sorted[Math.floor(sorted.length * 0.75)];
+                  const iqr = q3 - q1;
+                  const capMin = q1 - 3 * iqr;
+                  const capMax = q3 + 3 * iqr;
+                  return result.historical_data.map((h: any) => ({
+                    ...h,
+                    company_value: h.company_value != null ? Math.max(capMin, Math.min(capMax, h.company_value)) : null,
+                    peer_avg: Math.max(capMin, Math.min(capMax, h.peer_avg)),
+                    peer_median: Math.max(capMin, Math.min(capMax, h.peer_median)),
+                  }));
+                })()}
                 margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
               >
                 <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
