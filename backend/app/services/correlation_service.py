@@ -42,8 +42,18 @@ class CorrelationService:
             )
 
         corr_matrix, valid_tickers, num_days = self._calculate_correlation_matrix(price_data)
-        dendrogram_image = self._generate_clustermap(corr_matrix, valid_tickers)
         cluster_assignments = self._assign_clusters(corr_matrix)
+
+        # Build labels based on label_mode
+        label_mode = getattr(request, 'label_mode', 'ticker')
+        if label_mode == 'name':
+            labels = [company_names.get(t, t.split('.')[0]) for t in valid_tickers]
+        else:
+            labels = [t.split('.')[0] for t in valid_tickers]
+
+        dendrogram_image = self._generate_clustermap(
+            corr_matrix, labels, cluster_assignments
+        )
         statistics = self._calculate_statistics(corr_matrix)
 
         return CorrelationResponse(
@@ -112,28 +122,57 @@ class CorrelationService:
         corr_matrix = returns.corr()
         return corr_matrix.values, corr_matrix.columns.tolist(), len(returns)
 
-    def _generate_clustermap(self, correlation_matrix: np.ndarray, tickers: List[str]) -> str:
+    def _generate_clustermap(self, correlation_matrix: np.ndarray,
+                              labels: List[str],
+                              cluster_assignments: Optional[np.ndarray] = None) -> str:
         plt.figure(figsize=(14, 12))
 
         # Brown Advisory branded colormap: white to navy
         colors = ['#FFFFFF', '#163963']
         ba_cmap = LinearSegmentedColormap.from_list('ba_navy', colors, N=256)
 
+        # Cluster colors for dendrogram branches and row/col coloring
+        CLUSTER_PALETTE = [
+            '#163963', '#D4A843', '#2E7D32', '#C62828', '#6A1B9A',
+            '#00838F', '#EF6C00', '#AD1457', '#1565C0', '#558B2F'
+        ]
+
+        # Build row_colors from cluster assignments
+        row_colors = None
+        if cluster_assignments is not None:
+            row_colors = [CLUSTER_PALETTE[int(c - 1) % len(CLUSTER_PALETTE)] for c in cluster_assignments]
+
+        # Set dendrogram colors via scipy color_threshold
+        # We use seaborn's tree_kws to pass color info
         g = sns.clustermap(
             correlation_matrix,
             cmap=ba_cmap,
             vmin=0, vmax=1,
-            xticklabels=tickers,
-            yticklabels=tickers,
+            xticklabels=labels,
+            yticklabels=labels,
             figsize=(14, 12),
             cbar_kws={'label': 'Correlation Coefficient'},
             method='ward',
             metric='euclidean',
             linewidths=0.5,
             linecolor='white',
-            annot=len(tickers) <= 15,
-            fmt='.2f'
+            annot=len(labels) <= 15,
+            fmt='.2f',
+            row_colors=row_colors,
+            col_colors=row_colors,
+            tree_kws={'linewidths': 1.5},
         )
+
+        # Color dendrogram branches
+        if cluster_assignments is not None:
+            n_clusters = len(set(cluster_assignments))
+            for ax_dendro in [g.ax_row_dendrogram, g.ax_col_dendrogram]:
+                for line in ax_dendro.collections:
+                    line.set_color('#163963')
+                for line in ax_dendro.get_children():
+                    if hasattr(line, 'set_color') and hasattr(line, 'get_xydata'):
+                        line.set_color('#163963')
+                        line.set_linewidth(1.5)
 
         g.ax_heatmap.tick_params(colors='#163963', labelsize=10)
         g.ax_heatmap.set_xlabel('', fontsize=12)
@@ -162,12 +201,27 @@ class CorrelationService:
     def _calculate_statistics(self, correlation_matrix: np.ndarray) -> CorrelationStatistics:
         n = len(correlation_matrix)
         upper_triangle = correlation_matrix[np.triu_indices(n, k=1)]
+        avg_corr = float(np.mean(upper_triangle))
+
+        # Effective number of independent bets (ENB)
+        # ENB = N / (1 + (N-1) * avg_pairwise_correlation)
+        # Higher = more diversified. Max = N (zero correlation), Min = 1 (perfect correlation)
+        if n > 1 and (1 + (n - 1) * avg_corr) > 0:
+            enb = n / (1 + (n - 1) * avg_corr)
+        else:
+            enb = float(n)
+
+        # Diversification score: ENB / N as a percentage (100% = perfectly diversified)
+        div_score = (enb / n) * 100 if n > 0 else 0
+
         return CorrelationStatistics(
             mean_correlation=float(np.mean(upper_triangle)),
             median_correlation=float(np.median(upper_triangle)),
             min_correlation=float(np.min(upper_triangle)),
             max_correlation=float(np.max(upper_triangle)),
-            num_pairs=len(upper_triangle)
+            num_pairs=len(upper_triangle),
+            diversification_score=round(div_score, 1),
+            effective_independent_bets=round(enb, 1)
         )
 
     def close(self):

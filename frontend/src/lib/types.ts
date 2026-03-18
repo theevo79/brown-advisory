@@ -80,6 +80,7 @@ export interface CorrelationRequest {
   years?: number;
   start_date?: string;
   end_date?: string;
+  label_mode?: string;
 }
 
 export interface CorrelationStatistics {
@@ -88,6 +89,8 @@ export interface CorrelationStatistics {
   min_correlation: number;
   max_correlation: number;
   num_pairs: number;
+  diversification_score?: number;
+  effective_independent_bets?: number;
 }
 
 export interface CorrelationResponse {

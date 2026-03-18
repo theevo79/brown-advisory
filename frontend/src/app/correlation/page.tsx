@@ -19,6 +19,7 @@ const TIME_PERIODS = [
 export default function CorrelationPage() {
   const [tickerInput, setTickerInput] = useState("2670.TSE, ABN.AS, ADEN.SW, AGS.BR, AIBG.LSE, ABF.LSE, AMV0.XETRA, SAN.MC, BIRG.IR, BARC.LSE, BAS.XETRA, BNP.PA, BNR.XETRA, BTI.US, BLND.LSE, BT-A.LSE, BRBY.LSE, CON.XETRA, 1878.TSE, DSY.PA, DCC.LSE, 4324.TSE, EDEN.PA, EVK.XETRA, FDJU.PA, FME.XETRA, GFC.PA, HEN3.XETRA, ICLR.US, IMB.LSE, 7182.TSE, AD.AS, LAND.LSE, MICC.AS, 8725.TSE, NICE.US, PBR-A.US, PRU.LSE, RBI.VI, RAND.AS, RNO.PA, REP.MC, RICHT.BUD, SNY.US, SW.PA, 8630.TSE, 8309.TSE, UHR.SW, TX.US, VOD.LSE, WPP.LSE, 7272.TSE");
   const [years, setYears] = useState(3);
+  const [labelMode, setLabelMode] = useState<"ticker" | "name">("ticker");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<CorrelationResponse | null>(null);
@@ -149,7 +150,7 @@ export default function CorrelationPage() {
     setError(null);
 
     try {
-      const response = await api.analyzeCorrelation({ tickers, years });
+      const response = await api.analyzeCorrelation({ tickers, years, label_mode: labelMode });
       setResult(response);
     } catch (err: any) {
       setError(err.message || "Correlation analysis failed");
@@ -159,12 +160,29 @@ export default function CorrelationPage() {
     }
   };
 
-  const handleAddTicker = (ticker: string) => {
+  const handleAddTicker = async (ticker: string) => {
     const current = tickerInput.trim();
-    if (current) {
-      setTickerInput(current + ", " + ticker);
-    } else {
-      setTickerInput(ticker);
+    const newInput = current ? current + ", " + ticker : ticker;
+    setTickerInput(newInput);
+
+    // Auto re-run if we already have results
+    if (result) {
+      const tickers = newInput
+        .split(/[,\n\t;]+/)
+        .map((t) => t.trim().toUpperCase())
+        .filter((t) => t.length > 0 && t.includes("."));
+      if (tickers.length >= 2) {
+        setLoading(true);
+        setError(null);
+        try {
+          const response = await api.analyzeCorrelation({ tickers, years, label_mode: labelMode });
+          setResult(response);
+        } catch (err: any) {
+          setError(err.message || "Correlation analysis failed");
+        } finally {
+          setLoading(false);
+        }
+      }
     }
   };
 
@@ -241,6 +259,18 @@ export default function CorrelationPage() {
               </select>
             </div>
 
+            <div>
+              <label className="block text-sm font-medium text-ba-navy mb-1">Dendrogram Labels</label>
+              <select
+                value={labelMode}
+                onChange={(e) => setLabelMode(e.target.value as "ticker" | "name")}
+                className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:border-ba-accent outline-none"
+              >
+                <option value="ticker">Ticker Symbols</option>
+                <option value="name">Company Names</option>
+              </select>
+            </div>
+
             <button
               onClick={handleAnalyze}
               disabled={loading || parseTickers(tickerInput).length < 2}
@@ -273,7 +303,7 @@ export default function CorrelationPage() {
           {/* Statistics */}
           <div className="ba-card">
             <h3 className="font-serif text-lg font-semibold text-ba-navy mb-3">Statistics</h3>
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
               <div>
                 <p className="text-xs text-gray-400 uppercase">Mean</p>
                 <p className="text-xl font-semibold text-ba-navy">{formatNumber(result.statistics.mean_correlation, 3)}</p>
@@ -293,6 +323,20 @@ export default function CorrelationPage() {
               <div>
                 <p className="text-xs text-gray-400 uppercase">Pairs</p>
                 <p className="text-xl font-semibold text-ba-navy">{result.statistics.num_pairs}</p>
+              </div>
+              <div>
+                <p className="text-xs text-gray-400 uppercase">Diversification</p>
+                <p className="text-xl font-semibold text-ba-navy">
+                  {result.statistics.diversification_score != null ? `${result.statistics.diversification_score}%` : "—"}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-gray-400 uppercase">Eff. Indep. Bets</p>
+                <p className="text-xl font-semibold text-ba-navy">
+                  {result.statistics.effective_independent_bets != null
+                    ? `${result.statistics.effective_independent_bets} / ${result.valid_tickers.length}`
+                    : "—"}
+                </p>
               </div>
             </div>
           </div>

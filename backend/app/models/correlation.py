@@ -9,6 +9,7 @@ class CorrelationRequest(BaseModel):
     years: int = Field(default=5, ge=1, le=10)
     start_date: Optional[str] = None
     end_date: Optional[str] = None
+    label_mode: str = Field(default="ticker", description="ticker or name")
 
 
 class CorrelationStatistics(BaseModel):
@@ -17,6 +18,8 @@ class CorrelationStatistics(BaseModel):
     min_correlation: float
     max_correlation: float
     num_pairs: int
+    diversification_score: Optional[float] = None
+    effective_independent_bets: Optional[float] = None
 
 
 class CorrelationResponse(BaseModel):
