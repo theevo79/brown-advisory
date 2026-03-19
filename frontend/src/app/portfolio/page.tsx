@@ -13,6 +13,7 @@ import type {
   Tag,
   TagBreakdown,
   MetricSummary,
+  BenchmarkBreakdown,
 } from "@/lib/types";
 import {
   PieChart,
@@ -35,13 +36,21 @@ const COLORS = [
   "#2874a6",
 ];
 
-type ChartView = "sector" | "country" | "marketcap" | "valuation" | "profitability" | "tag";
+type ChartView = "sector" | "country" | "region" | "marketcap" | "valuation" | "profitability" | "tag" | "benchmark";
 
 interface MetricDistItem {
   ticker: string;
   name: string;
   value: number;
   weight: number;
+}
+
+interface MetricFilterState {
+  pe_max?: number;
+  cape_max?: number;
+  roe_min?: number;
+  net_margin_min?: number;
+  div_yield_min?: number;
 }
 
 export default function PortfolioPage() {
@@ -67,6 +76,7 @@ export default function PortfolioPage() {
   const [customTagType, setCustomTagType] = useState("");
   const [assigningTag, setAssigningTag] = useState<number | null>(null);
   const [showTagPanel, setShowTagPanel] = useState(false);
+  const [metricFilters, setMetricFilters] = useState<MetricFilterState>({});
 
   useEffect(() => {
     loadSavedPortfolios().then(async (portfolios) => {
@@ -373,6 +383,17 @@ export default function PortfolioPage() {
   }
   const tagTypes = Array.from(new Set(["General", ...Object.keys(tagsByType)])).sort();
 
+  // Filtered holdings for the detail table (5a)
+  const filteredHoldings = result?.holdings.filter((h) => {
+    const f = metricFilters;
+    if (f.pe_max != null && (h.pe_ratio == null || h.pe_ratio > f.pe_max)) return false;
+    if (f.cape_max != null && (h.cape_ratio == null || h.cape_ratio > f.cape_max)) return false;
+    if (f.roe_min != null && (h.roe == null || h.roe < f.roe_min)) return false;
+    if (f.net_margin_min != null && (h.net_margin == null || h.net_margin < f.net_margin_min)) return false;
+    if (f.div_yield_min != null && (h.div_yield == null || h.div_yield < f.div_yield_min)) return false;
+    return true;
+  }) ?? [];
+
   if (initialLoading) {
     return (
       <div>
@@ -518,6 +539,7 @@ export default function PortfolioPage() {
               { label: "Wtd PE", value: result.weighted_pe ? formatNumber(result.weighted_pe, 1) : "N/A" },
               { label: "Wtd CAPE", value: result.weighted_cape ? formatNumber(result.weighted_cape, 1) : "N/A" },
               { label: "Wtd PB", value: result.weighted_pb ? formatNumber(result.weighted_pb, 1) : "N/A" },
+              { label: "Wtd Div%", value: result.weighted_div_yield ? `${formatNumber(result.weighted_div_yield, 1)}%` : "N/A" },
               { label: "Wtd ROE", value: result.weighted_roe ? `${formatNumber(result.weighted_roe, 1)}%` : "N/A" },
               { label: "Wtd Margin", value: result.weighted_net_margin ? `${formatNumber(result.weighted_net_margin, 1)}%` : "N/A" },
             ].map((card) => (
@@ -537,9 +559,11 @@ export default function PortfolioPage() {
                   [
                     { key: "sector", label: "Sector" },
                     { key: "country", label: "Country" },
+                    { key: "region", label: "Region" },
                     { key: "marketcap", label: "Mkt Cap" },
                     { key: "valuation", label: "Valuation" },
                     { key: "profitability", label: "Profitability" },
+                    { key: "benchmark", label: "vs Benchmark" },
                     { key: "tag", label: "By Tag" },
                   ] as { key: ChartView; label: string }[]
                 ).map((view) => (
@@ -898,6 +922,118 @@ export default function PortfolioPage() {
               ) : (
                 <p className="text-sm text-gray-400 text-center py-8">No tags created yet. Create tags below to see breakdown.</p>
               )
+            ) : chartView === "region" && result ? (
+              /* Regional breakdown (5g) */
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <ResponsiveContainer width="100%" height={300}>
+                  <PieChart>
+                    <Pie
+                      data={result.region_breakdown.map((b) => ({ name: b.name, value: b.weight }))}
+                      dataKey="value"
+                      nameKey="name"
+                      cx="50%"
+                      cy="50%"
+                      outerRadius={110}
+                      label={({ name, value }) => `${name}: ${formatNumber(value, 1)}%`}
+                      labelLine={true}
+                    >
+                      {result.region_breakdown.map((_, i) => (
+                        <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip formatter={(value: any) => `${formatNumber(Number(value), 1)}%`} />
+                  </PieChart>
+                </ResponsiveContainer>
+                <ResponsiveContainer width="100%" height={300}>
+                  <BarChart
+                    data={result.region_breakdown.map((b) => ({
+                      name: b.name,
+                      weight: b.weight,
+                      count: b.count,
+                    }))}
+                    layout="vertical"
+                    margin={{ top: 5, right: 30, left: 120, bottom: 5 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
+                    <XAxis type="number" stroke="#163963" tick={{ fontSize: 11 }} />
+                    <YAxis dataKey="name" type="category" stroke="#163963" tick={{ fontSize: 11 }} width={120} />
+                    <Tooltip
+                      content={({ active, payload }) => {
+                        if (active && payload && payload.length) {
+                          const d = payload[0].payload;
+                          return (
+                            <div className="bg-white border border-gray-200 rounded p-2 text-xs shadow">
+                              <p className="font-semibold text-ba-navy">{d.name}</p>
+                              <p>Weight: {formatNumber(d.weight, 1)}%</p>
+                              <p>Stocks: {d.count}</p>
+                            </div>
+                          );
+                        }
+                        return null;
+                      }}
+                    />
+                    <Bar dataKey="weight" fill="#163963" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            ) : chartView === "benchmark" && result ? (
+              /* Benchmark comparison (5d/5e) */
+              <div className="space-y-6">
+                <p className="text-xs text-gray-400">Benchmark: MSCI EAFE Value (approximate weights)</p>
+                {[
+                  { label: "Sector", data: result.benchmark_sector },
+                  { label: "Country", data: result.benchmark_country },
+                ].map(({ label, data }) => (
+                  <div key={label}>
+                    <h4 className="text-sm font-medium text-ba-navy mb-2">{label} — Portfolio vs Benchmark</h4>
+                    <ResponsiveContainer width="100%" height={Math.max(250, data.length * 22)}>
+                      <BarChart
+                        data={data.map((b) => ({
+                          name: b.name.length > 18 ? b.name.substring(0, 18) + "…" : b.name,
+                          portfolio: b.portfolio_weight,
+                          benchmark: b.benchmark_weight,
+                          active: b.active_weight,
+                        }))}
+                        layout="vertical"
+                        margin={{ top: 5, right: 30, left: 110, bottom: 5 }}
+                      >
+                        <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
+                        <XAxis type="number" stroke="#163963" tick={{ fontSize: 10 }} />
+                        <YAxis dataKey="name" type="category" stroke="#163963" tick={{ fontSize: 10 }} width={110} />
+                        <Tooltip
+                          formatter={(val: any) => `${formatNumber(Number(val), 1)}%`}
+                        />
+                        <Bar dataKey="portfolio" name="Portfolio" fill="#163963" />
+                        <Bar dataKey="benchmark" name="Benchmark" fill="#a9cce3" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                    <div className="overflow-x-auto mt-2">
+                      <table className="min-w-full text-xs">
+                        <thead>
+                          <tr className="border-b border-gray-200">
+                            <th className="text-left py-1 px-2 font-semibold text-gray-500">{label}</th>
+                            <th className="text-right py-1 px-2 font-semibold text-gray-500">Portfolio</th>
+                            <th className="text-right py-1 px-2 font-semibold text-gray-500">Benchmark</th>
+                            <th className="text-right py-1 px-2 font-semibold text-gray-500">Active</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {data.map((b) => (
+                            <tr key={b.name} className="border-b border-gray-100">
+                              <td className="py-1 px-2 font-medium text-ba-navy">{b.name}</td>
+                              <td className="py-1 px-2 text-right font-mono">{formatNumber(b.portfolio_weight, 1)}%</td>
+                              <td className="py-1 px-2 text-right font-mono text-gray-500">{formatNumber(b.benchmark_weight, 1)}%</td>
+                              <td className={`py-1 px-2 text-right font-mono font-semibold ${b.active_weight > 0 ? "text-green-600" : b.active_weight < 0 ? "text-red-600" : "text-gray-400"}`}>
+                                {b.active_weight > 0 ? "+" : ""}{formatNumber(b.active_weight, 1)}%
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ))}
+              </div>
             ) : (
               /* Standard sector/country charts */
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -1107,42 +1243,121 @@ export default function PortfolioPage() {
             )}
           </div>
 
-          {/* Holdings table */}
+          {/* Position Size Bar Chart (5b) */}
           <div className="ba-card">
-            <h3 className="font-serif text-lg font-semibold text-ba-navy mb-3">Holdings Detail</h3>
+            <h3 className="font-serif text-lg font-semibold text-ba-navy mb-3">Position Sizes</h3>
+            <ResponsiveContainer width="100%" height={Math.max(300, result.holdings.length * 20)}>
+              <BarChart
+                data={[...result.holdings].sort((a, b) => b.weight - a.weight).map((h) => ({
+                  name: h.ticker.split(".")[0],
+                  weight: h.weight,
+                  company: h.company_name,
+                }))}
+                layout="vertical"
+                margin={{ top: 5, right: 30, left: 60, bottom: 5 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
+                <XAxis type="number" stroke="#163963" tick={{ fontSize: 10 }} unit="%" />
+                <YAxis dataKey="name" type="category" stroke="#163963" tick={{ fontSize: 9 }} width={60} />
+                <Tooltip
+                  content={({ active, payload }) => {
+                    if (active && payload && payload.length) {
+                      const d = payload[0].payload;
+                      return (
+                        <div className="bg-white border border-gray-200 rounded p-2 text-xs shadow">
+                          <p className="font-semibold text-ba-navy">{d.company}</p>
+                          <p>Weight: {formatNumber(d.weight, 2)}%</p>
+                        </div>
+                      );
+                    }
+                    return null;
+                  }}
+                />
+                <Bar dataKey="weight" fill="#163963" />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* Holdings table with filters (5a) and performance columns (5c) */}
+          <div className="ba-card">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-serif text-lg font-semibold text-ba-navy">Holdings Detail</h3>
+              <span className="text-xs text-gray-400">
+                {filteredHoldings.length} / {result.holdings.length} shown
+              </span>
+            </div>
+
+            {/* Metric filters (5a) */}
+            <div className="flex flex-wrap gap-3 mb-3 text-xs">
+              {[
+                { key: "pe_max" as keyof MetricFilterState, label: "PE <", placeholder: "e.g. 20" },
+                { key: "cape_max" as keyof MetricFilterState, label: "CAPE <", placeholder: "e.g. 15" },
+                { key: "roe_min" as keyof MetricFilterState, label: "ROE >", placeholder: "e.g. 10" },
+                { key: "net_margin_min" as keyof MetricFilterState, label: "Margin >", placeholder: "e.g. 5" },
+                { key: "div_yield_min" as keyof MetricFilterState, label: "Div Yld >", placeholder: "e.g. 2" },
+              ].map(({ key, label, placeholder }) => (
+                <div key={key} className="flex items-center gap-1">
+                  <span className="text-gray-500">{label}</span>
+                  <input
+                    type="number"
+                    step="any"
+                    placeholder={placeholder}
+                    value={metricFilters[key] ?? ""}
+                    onChange={(e) => setMetricFilters({ ...metricFilters, [key]: e.target.value ? parseFloat(e.target.value) : undefined })}
+                    className="w-16 border border-gray-200 rounded px-1.5 py-0.5 text-xs focus:border-ba-accent outline-none"
+                  />
+                </div>
+              ))}
+              {Object.values(metricFilters).some((v) => v != null) && (
+                <button onClick={() => setMetricFilters({})} className="text-xs text-red-500 hover:underline">Clear</button>
+              )}
+            </div>
+
             <div className="overflow-x-auto">
               <table className="min-w-full text-sm">
                 <thead>
                   <tr className="border-b-2 border-ba-navy">
-                    <th className="px-3 py-2 text-left text-ba-navy font-semibold">Ticker</th>
-                    <th className="px-3 py-2 text-left text-ba-navy font-semibold">Company</th>
-                    <th className="px-3 py-2 text-right text-ba-navy font-semibold">Weight</th>
-                    <th className="px-3 py-2 text-left text-ba-navy font-semibold">Sector</th>
-                    <th className="px-3 py-2 text-left text-ba-navy font-semibold">Country</th>
-                    <th className="px-3 py-2 text-right text-ba-navy font-semibold">Mkt Cap</th>
-                    <th className="px-3 py-2 text-right text-ba-navy font-semibold">PE</th>
-                    <th className="px-3 py-2 text-right text-ba-navy font-semibold">CAPE</th>
-                    <th className="px-3 py-2 text-right text-ba-navy font-semibold">PB</th>
-                    <th className="px-3 py-2 text-right text-ba-navy font-semibold">ROE</th>
-                    <th className="px-3 py-2 text-right text-ba-navy font-semibold">Margin</th>
+                    <th className="px-2 py-2 text-left text-ba-navy font-semibold">Ticker</th>
+                    <th className="px-2 py-2 text-left text-ba-navy font-semibold">Company</th>
+                    <th className="px-2 py-2 text-right text-ba-navy font-semibold">Wt%</th>
+                    <th className="px-2 py-2 text-left text-ba-navy font-semibold">Sector</th>
+                    <th className="px-2 py-2 text-left text-ba-navy font-semibold">Country</th>
+                    <th className="px-2 py-2 text-right text-ba-navy font-semibold">Mkt Cap</th>
+                    <th className="px-2 py-2 text-right text-ba-navy font-semibold">PE</th>
+                    <th className="px-2 py-2 text-right text-ba-navy font-semibold">CAPE</th>
+                    <th className="px-2 py-2 text-right text-ba-navy font-semibold">PB</th>
+                    <th className="px-2 py-2 text-right text-ba-navy font-semibold">Div%</th>
+                    <th className="px-2 py-2 text-right text-ba-navy font-semibold">ROE</th>
+                    <th className="px-2 py-2 text-right text-ba-navy font-semibold">Margin</th>
+                    <th className="px-2 py-2 text-right text-ba-navy font-semibold">1M</th>
+                    <th className="px-2 py-2 text-right text-ba-navy font-semibold">3M</th>
+                    <th className="px-2 py-2 text-right text-ba-navy font-semibold">6M</th>
+                    <th className="px-2 py-2 text-right text-ba-navy font-semibold">12M</th>
+                    <th className="px-2 py-2 text-right text-ba-navy font-semibold">YTD</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {result.holdings.map((h) => (
-                    <tr key={h.ticker} className="border-b border-gray-100 hover:bg-gray-50">
-                      <td className="px-3 py-2 font-mono font-medium text-ba-navy">{h.ticker}</td>
-                      <td className="px-3 py-2 text-gray-600 max-w-[200px] truncate">{h.company_name}</td>
-                      <td className="px-3 py-2 text-right font-medium">{formatNumber(h.weight, 1)}%</td>
-                      <td className="px-3 py-2 text-gray-500">{h.sector || "-"}</td>
-                      <td className="px-3 py-2 text-gray-500">{h.country || "-"}</td>
-                      <td className="px-3 py-2 text-right text-gray-500">
+                  {filteredHoldings.map((h) => (
+                    <tr key={h.ticker} className="border-b border-gray-100 hover:bg-gray-50 text-xs">
+                      <td className="px-2 py-1.5 font-mono font-medium text-ba-navy">{h.ticker}</td>
+                      <td className="px-2 py-1.5 text-gray-600 max-w-[150px] truncate">{h.company_name}</td>
+                      <td className="px-2 py-1.5 text-right font-medium">{formatNumber(h.weight, 1)}</td>
+                      <td className="px-2 py-1.5 text-gray-500">{h.sector || "-"}</td>
+                      <td className="px-2 py-1.5 text-gray-500">{h.country || "-"}</td>
+                      <td className="px-2 py-1.5 text-right text-gray-500">
                         {h.market_cap_usd ? formatCurrency(h.market_cap_usd) : "-"}
                       </td>
-                      <td className="px-3 py-2 text-right">{h.pe_ratio ? formatNumber(h.pe_ratio, 1) : "-"}</td>
-                      <td className="px-3 py-2 text-right">{h.cape_ratio ? formatNumber(h.cape_ratio, 1) : "-"}</td>
-                      <td className="px-3 py-2 text-right">{h.pb_ratio ? formatNumber(h.pb_ratio, 1) : "-"}</td>
-                      <td className="px-3 py-2 text-right">{h.roe ? formatNumber(h.roe, 1) + "%" : "-"}</td>
-                      <td className="px-3 py-2 text-right">{h.net_margin ? formatNumber(h.net_margin, 1) + "%" : "-"}</td>
+                      <td className="px-2 py-1.5 text-right">{h.pe_ratio ? formatNumber(h.pe_ratio, 1) : "-"}</td>
+                      <td className="px-2 py-1.5 text-right">{h.cape_ratio ? formatNumber(h.cape_ratio, 1) : "-"}</td>
+                      <td className="px-2 py-1.5 text-right">{h.pb_ratio ? formatNumber(h.pb_ratio, 1) : "-"}</td>
+                      <td className="px-2 py-1.5 text-right">{h.div_yield ? formatNumber(h.div_yield, 1) : "-"}</td>
+                      <td className="px-2 py-1.5 text-right">{h.roe ? formatNumber(h.roe, 1) + "%" : "-"}</td>
+                      <td className="px-2 py-1.5 text-right">{h.net_margin ? formatNumber(h.net_margin, 1) + "%" : "-"}</td>
+                      {[h.return_1m, h.return_3m, h.return_6m, h.return_12m, h.return_ytd].map((ret, i) => (
+                        <td key={i} className={`px-2 py-1.5 text-right font-mono ${ret != null ? (ret >= 0 ? "text-green-600" : "text-red-600") : "text-gray-300"}`}>
+                          {ret != null ? `${ret >= 0 ? "+" : ""}${formatNumber(ret, 1)}%` : "-"}
+                        </td>
+                      ))}
                     </tr>
                   ))}
                 </tbody>

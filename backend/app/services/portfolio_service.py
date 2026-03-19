@@ -1,6 +1,7 @@
 """Portfolio visualization service."""
 
 from typing import List, Dict, Optional, Tuple
+from datetime import datetime, timedelta
 import numpy as np
 
 from app.utils.database import DatabaseClient
@@ -8,9 +9,101 @@ from app.utils.app_database import get_app_db
 from app.models.portfolio import (
     Holding, PortfolioCreateRequest, PortfolioResponse,
     PortfolioListItem, VisualizeRequest, VisualizationResponse,
-    BucketBreakdown, MetricSummary
+    BucketBreakdown, MetricSummary, BenchmarkBreakdown
 )
 from app.services.construction_service import MARKET_CAP_BUCKETS, _get_market_cap_bucket
+
+
+# MSCI EAFE Value approximate weights (from public factsheets, rounded)
+BENCHMARK_SECTOR_WEIGHTS = {
+    "Financial Services": 24.0,
+    "Industrials": 14.0,
+    "Healthcare": 9.5,
+    "Consumer Cyclical": 8.5,
+    "Communication Services": 7.0,
+    "Energy": 7.0,
+    "Basic Materials": 6.5,
+    "Consumer Defensive": 6.0,
+    "Utilities": 5.5,
+    "Real Estate": 5.0,
+    "Technology": 4.5,
+}
+
+BENCHMARK_COUNTRY_WEIGHTS = {
+    "Japan": 21.0,
+    "United Kingdom": 16.0,
+    "France": 10.5,
+    "Germany": 8.5,
+    "Switzerland": 7.0,
+    "Australia": 6.5,
+    "Netherlands": 4.0,
+    "Spain": 3.5,
+    "Italy": 3.5,
+    "Sweden": 3.0,
+    "Hong Kong": 2.5,
+    "Singapore": 2.0,
+    "Denmark": 1.5,
+    "Finland": 1.5,
+    "Belgium": 1.5,
+    "Norway": 1.5,
+    "Israel": 1.0,
+    "Ireland": 1.0,
+    "Austria": 0.5,
+    "Portugal": 0.5,
+    "New Zealand": 0.5,
+}
+
+COUNTRY_TO_REGION = {
+    "Japan": "Asia-Pacific",
+    "Australia": "Asia-Pacific",
+    "Hong Kong": "Asia-Pacific",
+    "Singapore": "Asia-Pacific",
+    "New Zealand": "Asia-Pacific",
+    "South Korea": "Asia-Pacific",
+    "China": "Asia-Pacific",
+    "Taiwan": "Asia-Pacific",
+    "India": "Asia-Pacific",
+    "Indonesia": "Asia-Pacific",
+    "Thailand": "Asia-Pacific",
+    "Malaysia": "Asia-Pacific",
+    "Philippines": "Asia-Pacific",
+    "United Kingdom": "Europe",
+    "France": "Europe",
+    "Germany": "Europe",
+    "Switzerland": "Europe",
+    "Netherlands": "Europe",
+    "Spain": "Europe",
+    "Italy": "Europe",
+    "Sweden": "Europe",
+    "Denmark": "Europe",
+    "Finland": "Europe",
+    "Belgium": "Europe",
+    "Norway": "Europe",
+    "Ireland": "Europe",
+    "Austria": "Europe",
+    "Portugal": "Europe",
+    "Greece": "Europe",
+    "Luxembourg": "Europe",
+    "Czech Republic": "Europe",
+    "Poland": "Europe",
+    "Hungary": "Europe",
+    "Turkey": "Europe",
+    "Russia": "Europe",
+    "United States": "North America",
+    "Canada": "North America",
+    "Mexico": "Latin America",
+    "Brazil": "Latin America",
+    "Chile": "Latin America",
+    "Colombia": "Latin America",
+    "Peru": "Latin America",
+    "Argentina": "Latin America",
+    "Israel": "Middle East & Africa",
+    "South Africa": "Middle East & Africa",
+    "Saudi Arabia": "Middle East & Africa",
+    "Qatar": "Middle East & Africa",
+    "Kuwait": "Middle East & Africa",
+    "UAE": "Middle East & Africa",
+}
 
 
 class PortfolioService:
@@ -87,6 +180,7 @@ class PortfolioService:
         holdings_data = []
         sector_map: Dict[str, List[Tuple[str, float]]] = {}
         country_map: Dict[str, List[Tuple[str, float]]] = {}
+        region_map: Dict[str, List[Tuple[str, float]]] = {}
 
         total_weight = sum(h.weight for h in request.holdings)
 
@@ -117,6 +211,9 @@ class PortfolioService:
             # Compute CAPE (10-year avg earnings)
             cape = self._compute_cape(company_id, market_cap)
 
+            # Performance returns
+            returns = self._get_price_returns(company_id)
+
             holdings_data.append(MetricSummary(
                 ticker=h.ticker,
                 company_name=company_name,
@@ -130,14 +227,21 @@ class PortfolioService:
                 roe=roe,
                 net_margin=net_margin,
                 eps=eps,
-                cape_ratio=cape
+                cape_ratio=cape,
+                return_1m=returns.get('1m'),
+                return_3m=returns.get('3m'),
+                return_6m=returns.get('6m'),
+                return_12m=returns.get('12m'),
+                return_ytd=returns.get('ytd'),
             ))
 
             # Bucket assignments
             s = sector or 'Unknown'
             c = country or 'Unknown'
+            r = COUNTRY_TO_REGION.get(c, 'Other')
             sector_map.setdefault(s, []).append((h.ticker, h.weight))
             country_map.setdefault(c, []).append((h.ticker, h.weight))
+            region_map.setdefault(r, []).append((h.ticker, h.weight))
 
         # Build a lookup from ticker -> metrics for bucket averages
         metrics_by_ticker = {h.ticker: h for h in holdings_data}
@@ -151,6 +255,7 @@ class PortfolioService:
         # Build breakdowns
         sector_breakdown = self._build_breakdown(sector_map, metrics_by_ticker)
         country_breakdown = self._build_breakdown(country_map, metrics_by_ticker)
+        region_breakdown = self._build_breakdown(region_map, metrics_by_ticker)
         mcap_breakdown_raw = self._build_breakdown(mcap_map, metrics_by_ticker)
         # Order by bucket size (Mega→Micro)
         mcap_order = [label for label, _, _ in MARKET_CAP_BUCKETS] + ["Unknown"]
@@ -169,10 +274,19 @@ class PortfolioService:
         top_10_weight = sum(weights[:10])
         hhi = sum((w / total_weight * 100) ** 2 for w in weights) if total_weight > 0 else 0
 
+        # Benchmark comparisons
+        benchmark_sector = self._build_benchmark_comparison(
+            sector_breakdown, BENCHMARK_SECTOR_WEIGHTS
+        )
+        benchmark_country = self._build_benchmark_comparison(
+            country_breakdown, BENCHMARK_COUNTRY_WEIGHTS
+        )
+
         return VisualizationResponse(
             holdings=holdings_data,
             sector_breakdown=sector_breakdown,
             country_breakdown=country_breakdown,
+            region_breakdown=region_breakdown,
             market_cap_breakdown=mcap_breakdown,
             total_weight=total_weight,
             num_holdings=len(request.holdings),
@@ -183,7 +297,9 @@ class PortfolioService:
             weighted_net_margin=weighted_margin,
             weighted_cape=weighted_cape,
             top_10_weight=top_10_weight,
-            hhi=round(hhi, 1)
+            hhi=round(hhi, 1),
+            benchmark_sector=benchmark_sector,
+            benchmark_country=benchmark_country,
         )
 
     def _get_company_metrics(self, company_id: int):
@@ -335,6 +451,66 @@ class PortfolioService:
         if valid_weight == 0:
             return None
         return round(numerator / valid_weight, 2)
+
+    def _get_price_returns(self, company_id: int) -> Dict[str, Optional[float]]:
+        """Calculate 1m, 3m, 6m, 12m, YTD price returns."""
+        conn = self.db.db.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            SELECT trade_date, adjusted_close FROM daily_prices
+            WHERE company_id = ? ORDER BY trade_date DESC LIMIT 1
+        ''', (company_id,))
+        latest = cursor.fetchone()
+        if not latest or not latest[1]:
+            return {}
+
+        latest_date = latest[0]
+        latest_price = latest[1]
+        today = datetime.now()
+
+        periods = {
+            '1m': (today - timedelta(days=30)).strftime('%Y-%m-%d'),
+            '3m': (today - timedelta(days=90)).strftime('%Y-%m-%d'),
+            '6m': (today - timedelta(days=182)).strftime('%Y-%m-%d'),
+            '12m': (today - timedelta(days=365)).strftime('%Y-%m-%d'),
+            'ytd': f'{today.year}-01-01',
+        }
+
+        results = {}
+        for period, target_date in periods.items():
+            cursor.execute('''
+                SELECT adjusted_close FROM daily_prices
+                WHERE company_id = ? AND trade_date <= ?
+                ORDER BY trade_date DESC LIMIT 1
+            ''', (company_id, target_date))
+            row = cursor.fetchone()
+            if row and row[0] and row[0] > 0:
+                results[period] = round(((latest_price - row[0]) / row[0]) * 100, 2)
+            else:
+                results[period] = None
+
+        return results
+
+    def _build_benchmark_comparison(
+        self, breakdown: List[BucketBreakdown], benchmark_weights: Dict[str, float]
+    ) -> List[BenchmarkBreakdown]:
+        """Build portfolio vs benchmark weight comparison."""
+        all_names = set(b.name for b in breakdown) | set(benchmark_weights.keys())
+        portfolio_map = {b.name: b.weight for b in breakdown}
+
+        result = []
+        for name in sorted(all_names):
+            pw = portfolio_map.get(name, 0.0)
+            bw = benchmark_weights.get(name, 0.0)
+            result.append(BenchmarkBreakdown(
+                name=name,
+                portfolio_weight=round(pw, 2),
+                benchmark_weight=round(bw, 2),
+                active_weight=round(pw - bw, 2),
+            ))
+        result.sort(key=lambda x: abs(x.active_weight), reverse=True)
+        return result
 
     def close(self):
         self.db.close()

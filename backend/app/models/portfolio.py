@@ -59,6 +59,11 @@ class MetricSummary(BaseModel):
     net_margin: Optional[float] = None
     eps: Optional[float] = None
     cape_ratio: Optional[float] = None
+    return_1m: Optional[float] = None
+    return_3m: Optional[float] = None
+    return_6m: Optional[float] = None
+    return_12m: Optional[float] = None
+    return_ytd: Optional[float] = None
 
 
 class TagResponse(BaseModel):
@@ -69,10 +74,18 @@ class TagResponse(BaseModel):
     tickers: List[str] = []
 
 
+class BenchmarkBreakdown(BaseModel):
+    name: str
+    portfolio_weight: float
+    benchmark_weight: float
+    active_weight: float
+
+
 class VisualizationResponse(BaseModel):
     holdings: List[MetricSummary]
     sector_breakdown: List[BucketBreakdown]
     country_breakdown: List[BucketBreakdown]
+    region_breakdown: List[BucketBreakdown] = []
     market_cap_breakdown: List[BucketBreakdown] = []
     total_weight: float
     num_holdings: int
@@ -84,3 +97,5 @@ class VisualizationResponse(BaseModel):
     weighted_cape: Optional[float] = None
     top_10_weight: float
     hhi: float
+    benchmark_sector: List[BenchmarkBreakdown] = []
+    benchmark_country: List[BenchmarkBreakdown] = []

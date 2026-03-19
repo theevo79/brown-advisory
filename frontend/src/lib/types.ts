@@ -209,12 +209,26 @@ export interface MetricSummary {
   net_margin?: number;
   eps?: number;
   cape_ratio?: number;
+  return_1m?: number;
+  return_3m?: number;
+  return_6m?: number;
+  return_12m?: number;
+  return_ytd?: number;
+}
+
+export interface BenchmarkBreakdown {
+  name: string;
+  portfolio_weight: number;
+  benchmark_weight: number;
+  active_weight: number;
 }
 
 export interface VisualizationResponse {
   holdings: MetricSummary[];
   sector_breakdown: BucketBreakdown[];
   country_breakdown: BucketBreakdown[];
+  region_breakdown: BucketBreakdown[];
+  market_cap_breakdown?: BucketBreakdown[];
   total_weight: number;
   num_holdings: number;
   weighted_pe?: number;
@@ -225,6 +239,8 @@ export interface VisualizationResponse {
   weighted_cape?: number;
   top_10_weight: number;
   hhi: number;
+  benchmark_sector: BenchmarkBreakdown[];
+  benchmark_country: BenchmarkBreakdown[];
 }
 
 // Tags
