@@ -23,6 +23,8 @@ class HoldingImpact(BaseModel):
     current_weight: float
     new_weight: float
     delta: float
+    pro_rata_weight: Optional[float] = None
+    alpha: Optional[float] = None
     market_cap_usd: Optional[float] = None
     pe_ratio: Optional[float] = None
     pb_ratio: Optional[float] = None

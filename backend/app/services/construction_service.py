@@ -204,6 +204,20 @@ class ConstructionService:
             current_mcap_buckets[mcap_bucket] = current_mcap_buckets.get(mcap_bucket, 0) + h.current_weight
             new_mcap_buckets[mcap_bucket] = new_mcap_buckets.get(mcap_bucket, 0) + h.new_weight
 
+        # Calculate pro-rata weights and alpha (6a)
+        # Pro-rata = each holding scaled proportionally so total = new_total
+        _cur_total = sum(h.current_weight for h in request.holdings)
+        _new_total = sum(h.new_weight for h in request.holdings)
+        if _cur_total > 0 and _new_total > 0:
+            scale = _new_total / _cur_total
+            for h in holdings_impact:
+                h.pro_rata_weight = round(h.current_weight * scale, 2)
+                h.alpha = round(h.new_weight - h.pro_rata_weight, 2)
+        else:
+            for h in holdings_impact:
+                h.pro_rata_weight = h.current_weight
+                h.alpha = round(h.new_weight - h.current_weight, 2)
+
         # Calculate bucket deltas
         def _build_deltas(current_map, new_map):
             all_keys = set(list(current_map.keys()) + list(new_map.keys()))

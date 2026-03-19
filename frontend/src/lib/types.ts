@@ -282,6 +282,8 @@ export interface HoldingImpact {
   current_weight: number;
   new_weight: number;
   delta: number;
+  pro_rata_weight?: number;
+  alpha?: number;
   market_cap_usd?: number;
   pe_ratio?: number;
   pb_ratio?: number;

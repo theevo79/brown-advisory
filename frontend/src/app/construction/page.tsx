@@ -539,12 +539,14 @@ export default function ConstructionPage() {
               <table className="min-w-full text-sm">
                 <thead>
                   <tr className="border-b-2 border-ba-navy">
-                    <th className="px-3 py-2 text-left text-ba-navy font-semibold">Ticker</th>
-                    <th className="px-3 py-2 text-left text-ba-navy font-semibold">Company</th>
-                    <th className="px-3 py-2 text-left text-ba-navy font-semibold">Sector</th>
-                    <th className="px-3 py-2 text-right text-ba-navy font-semibold">Current</th>
-                    <th className="px-3 py-2 text-right text-ba-navy font-semibold">New</th>
-                    <th className="px-3 py-2 text-right text-ba-navy font-semibold">Delta</th>
+                    <th className="px-2 py-2 text-left text-ba-navy font-semibold">Ticker</th>
+                    <th className="px-2 py-2 text-left text-ba-navy font-semibold">Company</th>
+                    <th className="px-2 py-2 text-left text-ba-navy font-semibold">Sector</th>
+                    <th className="px-2 py-2 text-right text-ba-navy font-semibold">Current</th>
+                    <th className="px-2 py-2 text-right text-ba-navy font-semibold">Pro-Rata</th>
+                    <th className="px-2 py-2 text-right text-ba-navy font-semibold">New</th>
+                    <th className="px-2 py-2 text-right text-ba-navy font-semibold">Delta</th>
+                    <th className="px-2 py-2 text-right text-ba-navy font-semibold">Alpha</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -552,13 +554,17 @@ export default function ConstructionPage() {
                     <tr key={h.ticker} className={`border-b border-gray-100 ${
                       h.current_weight === 0 ? "bg-green-50" : h.new_weight === 0 ? "bg-red-50" : ""
                     }`}>
-                      <td className="px-3 py-2 font-mono font-medium text-ba-navy">{h.ticker}</td>
-                      <td className="px-3 py-2 text-gray-600 max-w-[180px] truncate">{h.company_name}</td>
-                      <td className="px-3 py-2 text-gray-500">{h.sector || "-"}</td>
-                      <td className="px-3 py-2 text-right">{formatNumber(h.current_weight, 1)}%</td>
-                      <td className="px-3 py-2 text-right">{formatNumber(h.new_weight, 1)}%</td>
-                      <td className={`px-3 py-2 text-right font-medium ${getDeltaColor(h.delta)}`}>
+                      <td className="px-2 py-2 font-mono font-medium text-ba-navy">{h.ticker}</td>
+                      <td className="px-2 py-2 text-gray-600 max-w-[180px] truncate">{h.company_name}</td>
+                      <td className="px-2 py-2 text-gray-500">{h.sector || "-"}</td>
+                      <td className="px-2 py-2 text-right">{formatNumber(h.current_weight, 1)}%</td>
+                      <td className="px-2 py-2 text-right text-gray-400">{h.pro_rata_weight != null ? formatNumber(h.pro_rata_weight, 1) + "%" : "-"}</td>
+                      <td className="px-2 py-2 text-right font-medium">{formatNumber(h.new_weight, 1)}%</td>
+                      <td className={`px-2 py-2 text-right font-medium ${getDeltaColor(h.delta)}`}>
                         {h.delta !== 0 ? (h.delta > 0 ? "+" : "") + formatNumber(h.delta, 1) + "%" : "-"}
+                      </td>
+                      <td className={`px-2 py-2 text-right font-medium ${h.alpha != null ? getDeltaColor(h.alpha) : "text-gray-400"}`}>
+                        {h.alpha != null && Math.abs(h.alpha) > 0.01 ? (h.alpha > 0 ? "+" : "") + formatNumber(h.alpha, 1) + "%" : "-"}
                       </td>
                     </tr>
                   ))}
